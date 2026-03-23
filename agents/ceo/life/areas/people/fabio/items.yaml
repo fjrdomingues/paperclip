@@ -1,0 +1,80 @@
+facts:
+  - id: fabio-001
+    content: "Uses Moloni as accounting/invoicing software"
+    source: telegram_voice_2026-03-22
+    created: "2026-03-22"
+    status: active
+    access_count: 1
+    last_accessed: "2026-03-22"
+
+  - id: fabio-002
+    content: "External accounting firm uses TaxDome to send monthly tax amounts"
+    source: telegram_voice_2026-03-22
+    created: "2026-03-22"
+    status: active
+    access_count: 1
+    last_accessed: "2026-03-22"
+
+  - id: fabio-003
+    content: "Monthly taxes are variable, not fixed. Paid manually from company bank account"
+    source: telegram_voice_2026-03-22
+    created: "2026-03-22"
+    status: active
+    access_count: 1
+    last_accessed: "2026-03-22"
+
+  - id: fabio-004
+    content: "Coverflex invoice process: duplicate previous month in Moloni, update description, export, email to Coverflex finance"
+    source: telegram_voice_2026-03-22
+    created: "2026-03-22"
+    status: active
+    access_count: 1
+    last_accessed: "2026-03-22"
+
+  - id: fabio-005
+    content: "Invoice volume: roughly 10 paper + 10 digital per month"
+    source: telegram_voice_2026-03-22
+    created: "2026-03-22"
+    status: active
+    access_count: 1
+    last_accessed: "2026-03-22"
+
+  - id: fabio-006
+    content: "HomeAI: previously worked with a partner on AI outreach to real estate agents via WhatsApp. Wants to evolve into fully automated AI agent for the entire pipeline"
+    source: telegram_voice_2026-03-22
+    created: "2026-03-22"
+    status: active
+    access_count: 1
+    last_accessed: "2026-03-22"
+
+  - id: fabio-007
+    content: "HomeAI rebuild blocker: needs Meta approval for WhatsApp Business API message templates (back-office work)"
+    source: telegram_voice_2026-03-22
+    created: "2026-03-22"
+    status: active
+    access_count: 1
+    last_accessed: "2026-03-22"
+
+  - id: fabio-008
+    content: "Telegram: @WildCats99 (Ze), chat_id 528866003. Prefers Telegram for async communication"
+    source: telegram_2026-03-21
+    created: "2026-03-23"
+    status: active
+    access_count: 1
+    last_accessed: "2026-03-23"
+
+  - id: fabio-009
+    content: "HomeAI pricing: customer testing showed willingness to pay 50€+, standard in industry. Fábio open to testing 29€ entry price"
+    source: telegram_text_2026-03-22
+    created: "2026-03-23"
+    status: active
+    access_count: 1
+    last_accessed: "2026-03-23"
+
+  - id: fabio-010
+    content: "Self-described as not very organized with paperwork/invoices"
+    source: telegram_voice_2026-03-22
+    created: "2026-03-23"
+    status: active
+    access_count: 1
+    last_accessed: "2026-03-23"

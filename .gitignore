@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+
+# Secrets & credentials
+.env
+*.pem
+*.key
+credentials.json
+**/oauth_token.json
+**/token_cache.json
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs & runtime data
+*.log
+**/data/
+**/state.json
+
+# Node
+node_modules/

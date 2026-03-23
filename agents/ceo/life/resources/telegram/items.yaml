@@ -1,0 +1,20 @@
+- id: telegram-bot-setup
+  type: reference
+  content: "Telegram bot @winnerdino_bot (token in WIN-3 issue) communicates with Fábio (chat_id 528866003, @WildCats99). Uses getUpdates polling."
+  source: WIN-3
+  created: "2026-03-21"
+  status: active
+
+- id: telegram-polling-gap
+  type: observation
+  content: "No persistent polling process for Telegram. Messages only read during ad-hoc heartbeats. Root cause of WIN-11."
+  source: WIN-11
+  created: "2026-03-21"
+  status: active
+
+- id: telegram-voice-request
+  type: request
+  content: "Fábio asked to send voice messages on Telegram. Needs STT API (e.g. Whisper). He offered to provide API tokens."
+  source: "Telegram message 2026-03-21"
+  created: "2026-03-21"
+  status: active
