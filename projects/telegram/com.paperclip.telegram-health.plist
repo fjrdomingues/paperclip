@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.paperclip.telegram-health</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/osascript</string>
+        <string>-e</string>
+        <string>do shell script "export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin; /bin/bash /Users/fabiodomingues/Desktop/Projects/paperclip/projects/telegram/health-check.sh >> /Users/fabiodomingues/Desktop/Projects/paperclip/projects/telegram/data/health.log 2>&amp;1"</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>120</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/fabiodomingues/.paperclip/logs/telegram-health-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/fabiodomingues/.paperclip/logs/telegram-health-stderr.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
