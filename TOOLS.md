@@ -9,9 +9,9 @@ Direct access to @winnerdino_bot for messaging Fábio (chat_id 528866003, @WildC
 ### Setup
 
 - **Token**: env file at `projects/telegram/.env` (contains `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`)
-- **Inbox**: `projects/telegram/data/inbox.jsonl` — append-only JSONL, populated by cron every 60s
-- **State**: `projects/telegram/data/state.json` — polling offset tracker
-- **Cron**: system crontab runs `projects/telegram/cron-poll.sh` every 60s
+- **Inbox**: `projects/telegram/data/inbox.jsonl` — append-only JSONL, populated every 60s
+- **State**: `projects/telegram/data/state.json` — polling offset and auto-wake cooldown tracker
+- **Poller**: launchd agent `com.paperclip.telegram-poll` runs `projects/telegram/cron-poll.sh` every 60s (survives macOS sleep, catches up on wake)
 
 Always load the env before any Telegram API call:
 
