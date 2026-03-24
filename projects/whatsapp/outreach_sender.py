@@ -141,8 +141,8 @@ def extract_first_name(full_name):
 
 def main():
     parser = argparse.ArgumentParser(description="WhatsApp Outreach Sender")
-    parser.add_argument("--template", default="remodelar_initial_outreach",
-                        help="Template name to use (default: remodelar_initial_outreach)")
+    parser.add_argument("--template", default="remodelar_agentes_outreach",
+                        help="Template name to use (default: remodelar_agentes_outreach)")
     parser.add_argument("--daily-cap", type=int, default=30,
                         help="Max messages to send per day (default: 30)")
     parser.add_argument("--dry-run", action="store_true",

@@ -280,13 +280,13 @@ def main():
         from_number = require_env("TWILIO_WHATSAPP_FROM")
 
     templates = load_templates()
-    followup_template = templates.get("remodelar_followup")
+    followup_template = templates.get("remodelar_agentes_followup")
     if not followup_template:
-        print("ERROR: remodelar_followup template not found in templates.json", file=sys.stderr)
+        print("ERROR: remodelar_agentes_followup template not found in templates.json", file=sys.stderr)
         sys.exit(1)
 
     if followup_template["status"] not in ("approved",):
-        print(f"WARNING: remodelar_followup template status is '{followup_template['status']}' (not 'approved')")
+        print(f"WARNING: remodelar_agentes_followup template status is '{followup_template['status']}' (not 'approved')")
         print("Meta may reject messages sent with unapproved templates.")
 
     sent_log = load_sent_log()
@@ -307,7 +307,7 @@ def main():
         # Only process phones that received initial outreach successfully
         initial_sends = [
             e for e in sent_entries
-            if e.get("template_name") == "remodelar_initial_outreach" and e.get("status") == "sent"
+            if e.get("template_name") in ("remodelar_agentes_outreach", "remodelar_initial_outreach") and e.get("status") == "sent"
         ]
         if not initial_sends:
             continue
@@ -388,7 +388,7 @@ def main():
 
         # Check if we also already sent a follow-up in the sent_log
         followup_already_sent = any(
-            e.get("template_name") == "remodelar_followup" and e.get("status") == "sent"
+            e.get("template_name") in ("remodelar_agentes_followup", "remodelar_followup") and e.get("status") == "sent"
             for e in sent_entries
         )
         if followup_already_sent:
@@ -441,7 +441,7 @@ def main():
                 "phone": phone,
                 "name": name,
                 "agency": agency,
-                "template_name": "remodelar_followup",
+                "template_name": "remodelar_agentes_followup",
                 "template_sid": followup_template["sid"],
                 "sent_at": now_utc().isoformat(),
                 "twilio_sid": twilio_sid,
