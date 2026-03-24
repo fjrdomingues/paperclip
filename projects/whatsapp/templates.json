@@ -1,0 +1,72 @@
+{
+  "templates": [
+    {
+      "sid": "HX7f566a01807371b376a7314bff5d103a",
+      "friendly_name": "remodelar_hello",
+      "name": "remodelar_hello",
+      "category": "MARKETING",
+      "language": "pt_PT",
+      "status": "approved",
+      "variables": {
+        "1": "customer_first_name"
+      },
+      "body": "Olá {{1}}! Bem-vindo à Remodelar.ai. Estamos aqui para ajudar com a sua remodelação. Como podemos ajudar?",
+      "notes": "First approved template, already in use"
+    },
+    {
+      "sid": "HX393062bd5763ae8af9d0169c478653f7",
+      "friendly_name": "remodelar_initial_outreach",
+      "name": "remodelar_initial_outreach",
+      "category": "MARKETING",
+      "language": "pt_PT",
+      "status": "received",
+      "variables": {
+        "1": "customer_first_name"
+      },
+      "body": "Olá {{1}}! 👋 Está a pensar em remodelar a sua casa? A Remodelar.ai ajuda-o a planear a sua remodelação de forma simples e rápida. Quer saber mais?",
+      "notes": "Submitted 2026-03-24, awaiting Meta approval"
+    },
+    {
+      "sid": "HXf2bb19145c9ed65f28dffd57f8df12fa",
+      "friendly_name": "remodelar_followup",
+      "name": "remodelar_followup",
+      "category": "MARKETING",
+      "language": "pt_PT",
+      "status": "received",
+      "variables": {
+        "1": "customer_first_name"
+      },
+      "body": "Olá {{1}}, estamos a dar seguimento ao seu interesse na Remodelar.ai. Tem alguma questão sobre como podemos ajudar com a sua remodelação? Estamos aqui para ajudar! 🏠",
+      "notes": "Submitted 2026-03-24, awaiting Meta approval"
+    },
+    {
+      "sid": "HXcc8d9d5698912427e7b2a4168b73f430",
+      "friendly_name": "remodelar_quote_ready",
+      "name": "remodelar_quote_ready",
+      "category": "UTILITY",
+      "language": "pt_PT",
+      "status": "received",
+      "variables": {
+        "1": "customer_first_name",
+        "2": "quote_link"
+      },
+      "body": "Olá {{1}}, o seu orçamento para a remodelação está pronto! 📋 Pode consultá-lo aqui: {{2}}. Qualquer dúvida, estamos ao dispor.",
+      "notes": "Submitted 2026-03-24, awaiting Meta approval"
+    },
+    {
+      "sid": "HX9d5d709b1321db8cd1d8141cd8554884",
+      "friendly_name": "remodelar_appointment_reminder",
+      "name": "remodelar_appointment_reminder",
+      "category": "UTILITY",
+      "language": "pt_PT",
+      "status": "received",
+      "variables": {
+        "1": "customer_name",
+        "2": "date",
+        "3": "time"
+      },
+      "body": "Olá {{1}}, lembramos que tem uma consulta agendada para {{2}} às {{3}}. Confirme a sua presença respondendo a esta mensagem. 📅",
+      "notes": "Submitted 2026-03-24, awaiting Meta approval"
+    }
+  ]
+}
