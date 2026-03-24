@@ -44,6 +44,28 @@ TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-528866003}"
 
 mkdir -p "$DATA_DIR"
 
+# --- Log rotation ---
+# Trim log files to the last LOG_MAX_LINES lines to prevent unbounded growth.
+LOG_MAX_LINES=1000
+LAUNCHD_LOG_DIR="$HOME/.paperclip/logs"
+
+rotate_log() {
+  local log_file="$1"
+  if [ -f "$log_file" ]; then
+    local line_count
+    line_count="$(wc -l < "$log_file")"
+    if [ "$line_count" -gt "$LOG_MAX_LINES" ]; then
+      local tmp
+      tmp="$(mktemp)"
+      tail -n "$LOG_MAX_LINES" "$log_file" > "$tmp" && mv "$tmp" "$log_file"
+    fi
+  fi
+}
+
+rotate_log "$LOG_FILE"
+rotate_log "$LAUNCHD_LOG_DIR/telegram-poll-stdout.log"
+rotate_log "$LAUNCHD_LOG_DIR/telegram-poll-stderr.log"
+
 # --- State management ---
 
 load_offset() {
