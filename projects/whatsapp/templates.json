@@ -67,6 +67,45 @@
       },
       "body": "Olá {{1}}, lembramos que tem uma consulta agendada para {{2}} às {{3}}. Confirme a sua presença respondendo a esta mensagem. 📅",
       "notes": "Submitted 2026-03-24, awaiting Meta approval"
+    },
+    {
+      "sid": "HXbd64ac8b0e7e60adb6e47ae09b081231",
+      "friendly_name": "remodelar_agentes_outreach",
+      "name": "remodelar_agentes_outreach",
+      "category": "MARKETING",
+      "language": "pt_PT",
+      "status": "received",
+      "variables": {
+        "1": "agent_first_name"
+      },
+      "body": "Olá {{1}}! 👋\n\nSou da Remodelar.ai — fazemos home staging virtual com IA para agentes imobiliários.\n\nTransformamos fotos de imóveis vazios em espaços decorados em 24h, a partir de €29.\n\nQuer experimentar? Oferecemos 1 foto gratuita para ver o resultado. Basta enviar uma foto de um dos seus imóveis.",
+      "notes": "Submitted 2026-03-24 (WIN-61), awaiting Meta approval. Agent-specific outreach."
+    },
+    {
+      "sid": "HX930b1802ceacf3729619d405a472447d",
+      "friendly_name": "remodelar_agentes_followup",
+      "name": "remodelar_agentes_followup",
+      "category": "MARKETING",
+      "language": "pt_PT",
+      "status": "received",
+      "variables": {
+        "1": "agent_first_name"
+      },
+      "body": "Olá {{1}}, voltamos a contactá-lo/a sobre a Remodelar.ai.\n\n🏡 Imóveis com home staging virtual vendem 30% mais rápido e geram mais visitas nos portais.\n\nSe quiser ver como ficaria um dos seus imóveis, enviamos uma transformação gratuita.\n\nBasta responder com uma foto! 📸",
+      "notes": "Submitted 2026-03-24 (WIN-61), awaiting Meta approval. Agent-specific follow-up (48h)."
+    },
+    {
+      "sid": "HXff9b5e3b8568b931321e2160c8eaafad",
+      "friendly_name": "remodelar_agentes_closing",
+      "name": "remodelar_agentes_closing",
+      "category": "MARKETING",
+      "language": "pt_PT",
+      "status": "received",
+      "variables": {
+        "1": "agent_first_name"
+      },
+      "body": "Olá {{1}}, última mensagem da nossa parte! 🙂\n\nA nossa oferta de lançamento de €29 por até 10 fotos está disponível por tempo limitado.\n\nSe quiser experimentar antes de decidir, a demo gratuita ainda está disponível.\n\nBasta responder \"quero\" e tratamos de tudo! 🏡",
+      "notes": "Submitted 2026-03-24 (WIN-61), awaiting Meta approval. Agent-specific closing (5 days)."
     }
   ]
 }
