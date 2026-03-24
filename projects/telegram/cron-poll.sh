@@ -1,4 +1,6 @@
 #!/bin/bash
+# Ensure Homebrew binaries (jq, etc.) are on PATH when run from launchd/osascript
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 set -euo pipefail
 
 # Telegram Cron Poller
