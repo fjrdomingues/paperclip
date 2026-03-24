@@ -5,8 +5,11 @@ set -euo pipefail
 # Polls Telegram for new messages and stores them locally as JSONL.
 # Designed to run every 60s via system crontab — no Paperclip dependency.
 #
-# /wake command: if Fábio sends "/wake [context]", the CEO agent heartbeat
-# is triggered immediately via paperclipai heartbeat run.
+# Auto-wake: any message from Fábio triggers a CEO heartbeat automatically.
+# A 5-minute cooldown prevents duplicate wakes from rapid messages.
+#
+# /wake command: "/wake [context]" always triggers immediately (ignores cooldown).
+#
 # Requires PAPERCLIP_CEO_API_KEY in .env (one-time setup):
 #   paperclipai agent local-cli ceo -C <company-id> --no-install-skills --key-name telegram-wake
 # Then append the printed PAPERCLIP_API_KEY value to .env as PAPERCLIP_CEO_API_KEY=<value>
@@ -15,6 +18,7 @@ CEO_AGENT_ID="e2b797d0-8f0c-4bcf-adf9-99fd095ea14b"
 CEO_ALERT_ISSUE_ID="0d1502be-da96-4db1-bfe4-de78c19e473a"  # WIN-28: CEO alert inbox
 PAPERCLIP_API_BASE="${PAPERCLIP_API_BASE:-http://localhost:3100}"
 OWNER_CHAT_ID="528866003"
+AUTO_WAKE_COOLDOWN_SEC=300  # 5-minute cooldown between auto-wakes
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="$SCRIPT_DIR/data"
@@ -54,8 +58,28 @@ save_offset() {
   local offset="$1"
   local tmp
   tmp="$(mktemp)"
-  jq -n --argjson offset "$offset" '{"last_update_id": $offset, "last_poll": (now | todate)}' > "$tmp"
+  # Preserve last_auto_wake from existing state when saving offset
+  local existing_wake
+  existing_wake="$(jq -r '.last_auto_wake // 0' "$STATE_FILE" 2>/dev/null || echo 0)"
+  jq -n --argjson offset "$offset" --argjson last_auto_wake "$existing_wake" \
+    '{"last_update_id": $offset, "last_poll": (now | todate), "last_auto_wake": $last_auto_wake}' > "$tmp"
   mv "$tmp" "$STATE_FILE"
+}
+
+save_auto_wake() {
+  local tmp
+  tmp="$(mktemp)"
+  jq --argjson ts "$(date +%s)" '.last_auto_wake = $ts' "$STATE_FILE" > "$tmp"
+  mv "$tmp" "$STATE_FILE"
+}
+
+should_auto_wake() {
+  local last_wake
+  last_wake="$(jq -r '.last_auto_wake // 0' "$STATE_FILE" 2>/dev/null || echo 0)"
+  local now
+  now="$(date +%s)"
+  local elapsed=$(( now - last_wake ))
+  [ "$elapsed" -ge "$AUTO_WAKE_COOLDOWN_SEC" ]
 }
 
 sanitize_text() {
@@ -139,6 +163,9 @@ fi
 
 HIGHEST="$(printf '%s' "$RESPONSE" | jq -r '.result | max_by(.update_id) | .update_id')"
 
+OWNER_MSG_COUNT=0  # Track owner messages for auto-wake
+WAKE_ALREADY_FIRED=0  # Track if explicit /wake was used this cycle
+
 # Append each message to inbox.jsonl
 while IFS= read -r UPDATE; do
   MESSAGE="$(printf '%s' "$UPDATE" | jq -c '.message // empty')"
@@ -179,10 +206,17 @@ while IFS= read -r UPDATE; do
     MSG_CONTENT="[Unsupported message type]"
   fi
 
-  # Detect /wake command from the owner
+  # Track messages from the owner for auto-wake
+  if [ "$SENDER_ID" = "$OWNER_CHAT_ID" ]; then
+    OWNER_MSG_COUNT=$((OWNER_MSG_COUNT + 1))
+  fi
+
+  # Detect /wake command from the owner (explicit, always fires regardless of cooldown)
   if [ "$SENDER_ID" = "$OWNER_CHAT_ID" ] && printf '%s' "$TEXT" | grep -qiE '^/wake'; then
     WAKE_CONTEXT="$(printf '%s' "$TEXT" | sed -E 's|^/wake[[:space:]]*||i')"
     wake_ceo "$WAKE_CONTEXT"
+    save_auto_wake  # Reset cooldown so auto-wake doesn't double-fire
+    WAKE_ALREADY_FIRED=1
   fi
 
   # Write to inbox as JSONL
@@ -201,3 +235,10 @@ done < <(printf '%s' "$RESPONSE" | jq -c '.result[]')
 
 save_offset "$HIGHEST"
 echo "$(date -Iseconds) OK: $COUNT messages ingested (offset=$HIGHEST)" >> "$LOG_FILE"
+
+# Auto-wake CEO on any owner message (with cooldown, skip if /wake already fired)
+if [ "$OWNER_MSG_COUNT" -gt 0 ] && [ "$WAKE_ALREADY_FIRED" -eq 0 ] && should_auto_wake; then
+  echo "$(date -Iseconds) INFO: Auto-waking CEO ($OWNER_MSG_COUNT owner message(s))" >> "$LOG_FILE"
+  wake_ceo "New Telegram message(s) from Fábio"
+  save_auto_wake
+fi
