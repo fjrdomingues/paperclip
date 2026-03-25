@@ -6,7 +6,7 @@
       "name": "remodelar_hello",
       "category": "MARKETING",
       "language": "pt_PT",
-      "status": "received",
+      "status": "pending",
       "variables": {
         "1": "customer_first_name"
       },
@@ -19,7 +19,7 @@
       "name": "remodelar_initial_outreach",
       "category": "MARKETING",
       "language": "pt_PT",
-      "status": "received",
+      "status": "approved",
       "variables": {
         "1": "customer_first_name"
       },
@@ -32,7 +32,7 @@
       "name": "remodelar_followup",
       "category": "MARKETING",
       "language": "pt_PT",
-      "status": "received",
+      "status": "pending",
       "variables": {
         "1": "customer_first_name"
       },
@@ -40,41 +40,12 @@
       "notes": "Resubmitted 2026-03-25 (WIN-64), replaced remodelar.ai with Remodelar AI. Awaiting Meta approval."
     },
     {
-      "sid": "HXcc8d9d5698912427e7b2a4168b73f430",
-      "friendly_name": "remodelar_quote_ready",
-      "name": "remodelar_quote_ready",
-      "category": "UTILITY",
-      "language": "pt_PT",
-      "status": "received",
-      "variables": {
-        "1": "customer_first_name",
-        "2": "quote_link"
-      },
-      "body": "Olá {{1}}, o seu orçamento para a remodelação está pronto! 📋 Pode consultá-lo aqui: {{2}}. Qualquer dúvida, estamos ao dispor.",
-      "notes": "Submitted 2026-03-24, awaiting Meta approval"
-    },
-    {
-      "sid": "HX9d5d709b1321db8cd1d8141cd8554884",
-      "friendly_name": "remodelar_appointment_reminder",
-      "name": "remodelar_appointment_reminder",
-      "category": "UTILITY",
-      "language": "pt_PT",
-      "status": "received",
-      "variables": {
-        "1": "customer_name",
-        "2": "date",
-        "3": "time"
-      },
-      "body": "Olá {{1}}, lembramos que tem uma consulta agendada para {{2}} às {{3}}. Confirme a sua presença respondendo a esta mensagem. 📅",
-      "notes": "Submitted 2026-03-24, awaiting Meta approval"
-    },
-    {
       "sid": "HX5f50a74611086c3a419f8ff4a174e869",
       "friendly_name": "remodelar_agentes_outreach",
       "name": "remodelar_agentes_outreach",
       "category": "MARKETING",
       "language": "pt_PT",
-      "status": "received",
+      "status": "approved",
       "variables": {
         "1": "agent_first_name"
       },
@@ -87,7 +58,7 @@
       "name": "remodelar_agentes_followup",
       "category": "MARKETING",
       "language": "pt_PT",
-      "status": "received",
+      "status": "pending",
       "variables": {
         "1": "agent_first_name"
       },
@@ -100,7 +71,7 @@
       "name": "remodelar_agentes_closing",
       "category": "MARKETING",
       "language": "pt_PT",
-      "status": "received",
+      "status": "pending",
       "variables": {
         "1": "agent_first_name"
       },
