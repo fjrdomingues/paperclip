@@ -17,10 +17,19 @@ import json
 import os
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from urllib import request, parse
 from urllib.error import HTTPError
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore
+
+LISBON_TZ = ZoneInfo("Europe/Lisbon")
+BUSINESS_HOURS_START = 9   # 09:00
+BUSINESS_HOURS_END = 18    # 18:00
 
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
@@ -90,6 +99,12 @@ def append_sent_log(entry):
         if not file_exists:
             writer.writeheader()
         writer.writerow(entry)
+
+
+def is_business_hours():
+    """Return True if current Lisbon time is within 09:00-18:00 WET/WEST."""
+    now_lisbon = datetime.now(LISBON_TZ)
+    return BUSINESS_HOURS_START <= now_lisbon.hour < BUSINESS_HOURS_END
 
 
 def ensure_whatsapp_prefix(phone):
@@ -181,6 +196,16 @@ def main():
     sent_count = 0
     skipped_count = 0
     failed_count = 0
+
+    now_lisbon = datetime.now(LISBON_TZ)
+    in_hours = is_business_hours()
+    print(f"Business-hours check: {now_lisbon.strftime('%Y-%m-%d %H:%M %Z')} — {'OPEN (09:00-18:00)' if in_hours else 'CLOSED (outside 09:00-18:00)'}")
+    if not in_hours and not args.dry_run:
+        next_open = now_lisbon.replace(hour=BUSINESS_HOURS_START, minute=0, second=0, microsecond=0)
+        if now_lisbon.hour >= BUSINESS_HOURS_END:
+            next_open = next_open + timedelta(days=1)
+        print(f"Outside business hours. Next window opens at {next_open.strftime('%Y-%m-%d %H:%M %Z')}. Exiting.")
+        sys.exit(0)
 
     for lead in leads:
         phone = lead.get("phone", "").strip()
