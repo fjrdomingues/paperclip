@@ -30,6 +30,8 @@ if [ -z "${TWILIO_ACCOUNT_SID:-}" ] || [ -z "${TWILIO_API_KEY_SID:-}" ] || [ -z 
 fi
 
 WHATSAPP_TO="${TWILIO_WHATSAPP_FROM:-whatsapp:+15559382429}"
+# URL-encode for Twilio API query parameter (: → %3A, + → %2B)
+WHATSAPP_TO_ENCODED="$(echo "$WHATSAPP_TO" | sed 's/:/%3A/g; s/+/%2B/g')"
 
 # --- Log rotation ---
 LOG_MAX_LINES=1000
@@ -104,7 +106,7 @@ fi
 # Poll Twilio Messages API
 RESPONSE="$(curl -fsS --max-time 30 \
   -u "${TWILIO_API_KEY_SID}:${TWILIO_API_KEY_SECRET}" \
-  "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json?To=${WHATSAPP_TO}&PageSize=50&DateSent>=${DATE_FILTER}" \
+  "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json?To=${WHATSAPP_TO_ENCODED}&PageSize=50&DateSent%3E%3D${DATE_FILTER}" \
   2>>"$LOG_FILE")" || {
   echo "$(date -Iseconds) ERROR: Twilio API request failed" >> "$LOG_FILE"
   exit 1
