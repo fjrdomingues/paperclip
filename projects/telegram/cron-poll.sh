@@ -110,6 +110,32 @@ sanitize_text() {
   printf '%s' "$1" | sed -E 's/sk-[[:alnum:]_-]{20,}/[REDACTED]/g'
 }
 
+# --- Document download helper ---
+# Usage: download_telegram_document <file_id> [filename]
+# Downloads a Telegram document by file_id and prints the local path.
+# Caller is responsible for removing the temp dir: rm -rf "$(dirname "$output_path")"
+download_telegram_document() {
+  local file_id="$1"
+  local filename="${2:-document}"
+  local metadata
+  local file_path
+  local tmp_dir
+  local output_path
+
+  metadata="$(curl -fsS --max-time 30 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${file_id}" 2>>"$LOG_FILE")"
+  file_path="$(printf '%s' "$metadata" | jq -r '.result.file_path // empty')"
+
+  if [ -z "$file_path" ]; then
+    echo "$(date -Iseconds) ERROR: getFile failed for file_id=$file_id" >> "$LOG_FILE"
+    return 1
+  fi
+
+  tmp_dir="$(mktemp -d)"
+  output_path="$tmp_dir/$filename"
+  curl -fsS --max-time 60 "https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file_path}" -o "$output_path" 2>>"$LOG_FILE"
+  printf '%s' "$output_path"
+}
+
 # --- /wake command ---
 
 wake_ceo() {
@@ -132,8 +158,9 @@ wake_ceo() {
     --arg type "wake" \
     --arg content "/wake${context:+ }${context}" \
     --arg voice_file_id "" \
+    --arg document_file_id "" \
     --arg read "false" \
-    '{sender_name: $sender_name, sender_id: $sender_id, timestamp: $timestamp, type: $type, content: $content, voice_file_id: $voice_file_id, read: $read}' \
+    '{sender_name: $sender_name, sender_id: $sender_id, timestamp: $timestamp, type: $type, content: $content, voice_file_id: $voice_file_id, document_file_id: $document_file_id, read: $read}' \
     >> "$INBOX_FILE"
 
   # Trigger CEO heartbeat via @-mention on the CEO alert inbox issue (WIN-28).
@@ -204,6 +231,7 @@ while IFS= read -r UPDATE; do
   VOICE_DURATION="$(printf '%s' "$MESSAGE" | jq -r '.voice.duration // empty')"
   VOICE_FILE_ID="$(printf '%s' "$MESSAGE" | jq -r '.voice.file_id // empty')"
   DOC_NAME="$(printf '%s' "$MESSAGE" | jq -r '.document.file_name // empty')"
+  DOC_FILE_ID="$(printf '%s' "$MESSAGE" | jq -r '.document.file_id // empty')"
   HAS_PHOTO="$(printf '%s' "$MESSAGE" | jq -r 'if .photo then "yes" else "" end')"
   HAS_VIDEO="$(printf '%s' "$MESSAGE" | jq -r 'if .video then "yes" else "" end')"
 
@@ -251,8 +279,9 @@ while IFS= read -r UPDATE; do
     --arg type "$MSG_TYPE" \
     --arg content "$MSG_CONTENT" \
     --arg voice_file_id "${VOICE_FILE_ID:-}" \
+    --arg document_file_id "${DOC_FILE_ID:-}" \
     --arg read "false" \
-    '{sender_name: $sender_name, sender_id: $sender_id, timestamp: $timestamp, type: $type, content: $content, voice_file_id: $voice_file_id, read: $read}' \
+    '{sender_name: $sender_name, sender_id: $sender_id, timestamp: $timestamp, type: $type, content: $content, voice_file_id: $voice_file_id, document_file_id: $document_file_id, read: $read}' \
     >> "$INBOX_FILE"
 
 done < <(printf '%s' "$RESPONSE" | jq -c '.result[]')
