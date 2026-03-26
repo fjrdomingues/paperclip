@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.paperclip.whatsapp-outreach</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin; /usr/bin/python3 /Users/fabiodomingues/Desktop/Projects/paperclip/projects/whatsapp/outreach_sender.py --one-shot --daily-cap 50 >> /Users/fabiodomingues/.paperclip/logs/whatsapp-outreach-stdout.log 2>&amp;1</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>60</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/fabiodomingues/.paperclip/logs/whatsapp-outreach-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/fabiodomingues/.paperclip/logs/whatsapp-outreach-stderr.log</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
