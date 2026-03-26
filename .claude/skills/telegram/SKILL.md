@@ -68,12 +68,10 @@ rm "$TMP"
 Send a message to Fábio via Telegram.
 
 ```bash
-source /Users/fabiodomingues/Desktop/Projects/paperclip/projects/telegram/.env
-MESSAGE="Your message here"
-curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-  -d "chat_id=${TELEGRAM_CHAT_ID}" \
-  --data-urlencode "text=${MESSAGE}"
+bash /Users/fabiodomingues/Desktop/Projects/paperclip/projects/telegram/send.sh "${MESSAGE}" "Chief"
 ```
+
+This wrapper sends via the Telegram API and logs the outbound message to `inbox.jsonl` (with `direction: "outbound"`) so agents have full conversation context. The second argument is the sender name/role.
 
 Keep messages concise. Use plain text (Telegram supports basic markdown with `parse_mode=Markdown` if needed).
 

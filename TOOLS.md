@@ -33,16 +33,26 @@ else
 fi
 ```
 
-Each inbox line is JSON: `{sender_name, sender_id, timestamp, type, content, voice_file_id, read}`.
+Each inbox line is JSON: `{sender_name, sender_id, timestamp, type, content, voice_file_id, document_file_id, photo_file_id, read}`.
 
 ### Send a message
 
+**Important — single-point communication rule (per org):**
+
+This rule applies differently depending on the organisation:
+
+- **Multi-agent orgs** (e.g. the main Paperclip company with a CEO, CTO, Chief of Staff, etc.): only the designated Head/Chief of Staff sends Telegram messages to Fábio. All other agents report via Paperclip issue comments; the Head consolidates and relays. Exception: only when the Head explicitly delegates a direct reply to a specific agent.
+- **Single-agent orgs** (e.g. the fitness/gym org with only the Head Personal Trainer): the sole agent communicates directly with Fábio via Telegram — no relay needed.
+
+In all cases:
+- Always start your message with `[Your Name or Role]` so Fábio knows who is talking (e.g. `PT: ...` for the Personal Trainer).
+- Reason: multiple agents replying about the same topic floods Fábio's Telegram and wastes his time.
+
 ```bash
-source /Users/fabiodomingues/Desktop/Projects/paperclip/projects/telegram/.env
-curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-  -d "chat_id=${TELEGRAM_CHAT_ID}" \
-  --data-urlencode "text=YOUR MESSAGE HERE"
+bash /Users/fabiodomingues/Desktop/Projects/paperclip/projects/telegram/send.sh "YOUR MESSAGE HERE" "YourRole"
 ```
+
+This wrapper sends via the Telegram API and logs the outbound message to `inbox.jsonl` (with `direction: "outbound"`) so agents have full conversation context.
 
 ### Force immediate poll
 
@@ -63,6 +73,36 @@ curl -fsS -X POST "https://api.openai.com/v1/audio/transcriptions" \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -F "file=@${TMP}" -F "model=gpt-4o-mini-transcribe" -F "response_format=json" | jq -r '.text'
 rm "$TMP"
+```
+
+### Image reading (requires OPENAI_API_KEY)
+
+Download a photo from Telegram and describe it using OpenAI Vision:
+
+```bash
+source /Users/fabiodomingues/Desktop/Projects/paperclip/projects/telegram/.env
+FILE_ID="<photo_file_id from inbox>"
+META=$(curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${FILE_ID}")
+FILE_PATH=$(echo "$META" | jq -r '.result.file_path')
+TMP=$(mktemp /tmp/photo_XXXXXX.jpg)
+curl -fsS "https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${FILE_PATH}" -o "$TMP"
+# Read the image using the Read tool (Claude is multimodal) or send to OpenAI Vision:
+BASE64=$(base64 < "$TMP")
+curl -fsS -X POST "https://api.openai.com/v1/chat/completions" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Describe this image in detail.\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/jpeg;base64,${BASE64}\"}}]}],\"max_tokens\":500}" | jq -r '.choices[0].message.content'
+rm "$TMP"
+```
+
+### Document download
+
+Download a document from Telegram by file_id:
+
+```bash
+source /Users/fabiodomingues/Desktop/Projects/paperclip/projects/telegram/.env
+FILE_ID="<document_file_id from inbox>"
+bash -c 'source /Users/fabiodomingues/Desktop/Projects/paperclip/projects/telegram/cron-poll.sh; download_telegram_document "'"$FILE_ID"'" "filename.pdf"'
 ```
 
 ## Google Docs
