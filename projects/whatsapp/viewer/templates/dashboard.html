@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Outreach Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f6fa; color: #333; }
+
+    header {
+      background: #075e54;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { font-size: 20px; font-weight: 600; }
+    header a { color: #a8e6cf; font-size: 14px; text-decoration: none; }
+    header a:hover { text-decoration: underline; }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+
+    .refresh-bar {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .refresh-bar span { font-size: 13px; color: #888; }
+    .btn {
+      background: #075e54;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .btn:hover { background: #054d44; }
+
+    /* Metric cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 18px 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .card .label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .card .value { font-size: 32px; font-weight: 700; color: #075e54; }
+    .card .sub { font-size: 12px; color: #aaa; margin-top: 4px; }
+    .card.highlight .value { color: #e67e22; }
+    .card.green .value { color: #27ae60; }
+    .card.red .value { color: #c0392b; }
+
+    /* Pipeline funnel */
+    .section { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 24px; }
+    .section h2 { font-size: 15px; font-weight: 600; color: #555; margin-bottom: 16px; }
+
+    .funnel {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    .funnel-step {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .funnel-bar-wrap {
+      width: 100%;
+      height: 100px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    .funnel-bar {
+      width: 70%;
+      background: #075e54;
+      border-radius: 4px 4px 0 0;
+      min-height: 4px;
+      transition: height .4s ease;
+    }
+    .funnel-step.step-1 .funnel-bar { background: #2ecc71; }
+    .funnel-step.step-2 .funnel-bar { background: #3498db; }
+    .funnel-step.step-3 .funnel-bar { background: #9b59b6; }
+    .funnel-step.step-4 .funnel-bar { background: #e67e22; }
+    .funnel-step.step-5 .funnel-bar { background: #e74c3c; }
+
+    .funnel-count { font-size: 18px; font-weight: 700; }
+    .funnel-label { font-size: 11px; color: #888; text-align: center; }
+    .funnel-pct { font-size: 11px; color: #aaa; }
+
+    /* Daily table */
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { text-align: left; padding: 8px 12px; color: #888; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; border-bottom: 1px solid #eee; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafafa; }
+    .today-row td { background: #f0faf7; font-weight: 600; }
+
+    /* Replies */
+    .reply-list { display: flex; flex-direction: column; gap: 10px; }
+    .reply-item {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 10px;
+      border-radius: 8px;
+      background: #f9f9f9;
+    }
+    .reply-badge {
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge-demo { background: #fdebd0; color: #e67e22; }
+    .badge-interested { background: #d5f5e3; color: #27ae60; }
+    .badge-neutral { background: #eaf0fb; color: #3498db; }
+    .badge-opt_out { background: #fde8e8; color: #c0392b; }
+    .reply-content { flex: 1; }
+    .reply-name { font-size: 13px; font-weight: 600; }
+    .reply-body { font-size: 13px; color: #555; margin-top: 2px; }
+    .reply-time { font-size: 11px; color: #aaa; margin-top: 2px; }
+
+    .empty { color: #aaa; font-size: 14px; text-align: center; padding: 20px; }
+    .loading { color: #888; font-size: 14px; }
+
+    @media (max-width: 600px) {
+      .funnel { overflow-x: auto; }
+      .funnel-step { min-width: 70px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📊 Outreach Dashboard</h1>
+    <a href="/{{ pw_param }}">← Conversations</a>
+  </header>
+
+  <div class="container">
+    <div class="refresh-bar">
+      <span id="last-updated">Loading…</span>
+      <button class="btn" onclick="loadData()">Refresh</button>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="cards" id="cards">
+      <div class="card"><div class="label">Total Leads</div><div class="value loading">…</div></div>
+      <div class="card"><div class="label">Remaining</div><div class="value loading">…</div></div>
+      <div class="card"><div class="label">Sent (total)</div><div class="value loading">…</div></div>
+      <div class="card"><div class="label">Sent Today</div><div class="value loading">…</div></div>
+      <div class="card"><div class="label">Reply Rate</div><div class="value loading">…</div></div>
+      <div class="card green"><div class="label">Interested</div><div class="value loading">…</div></div>
+      <div class="card highlight"><div class="label">Demo Requests</div><div class="value loading">…</div></div>
+      <div class="card red"><div class="label">Opt-outs</div><div class="value loading">…</div></div>
+    </div>
+
+    <!-- Pipeline funnel -->
+    <div class="section">
+      <h2>Sales Pipeline</h2>
+      <div class="funnel" id="funnel">
+        <div class="funnel-step step-1">
+          <div class="funnel-bar-wrap"><div class="funnel-bar" id="bar-leads" style="height:0%"></div></div>
+          <div class="funnel-count" id="cnt-leads">…</div>
+          <div class="funnel-label">Total Leads</div>
+          <div class="funnel-pct" id="pct-leads">100%</div>
+        </div>
+        <div class="funnel-step step-2">
+          <div class="funnel-bar-wrap"><div class="funnel-bar" id="bar-contacted" style="height:0%"></div></div>
+          <div class="funnel-count" id="cnt-contacted">…</div>
+          <div class="funnel-label">Contacted</div>
+          <div class="funnel-pct" id="pct-contacted">…</div>
+        </div>
+        <div class="funnel-step step-3">
+          <div class="funnel-bar-wrap"><div class="funnel-bar" id="bar-replied" style="height:0%"></div></div>
+          <div class="funnel-count" id="cnt-replied">…</div>
+          <div class="funnel-label">Replied</div>
+          <div class="funnel-pct" id="pct-replied">…</div>
+        </div>
+        <div class="funnel-step step-4">
+          <div class="funnel-bar-wrap"><div class="funnel-bar" id="bar-interested" style="height:0%"></div></div>
+          <div class="funnel-count" id="cnt-interested">…</div>
+          <div class="funnel-label">Interested</div>
+          <div class="funnel-pct" id="pct-interested">…</div>
+        </div>
+        <div class="funnel-step step-5">
+          <div class="funnel-bar-wrap"><div class="funnel-bar" id="bar-demo" style="height:0%"></div></div>
+          <div class="funnel-count" id="cnt-demo">…</div>
+          <div class="funnel-label">Demo</div>
+          <div class="funnel-pct" id="pct-demo">…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Daily breakdown -->
+    <div class="section">
+      <h2>Daily Send Activity (last 30 days)</h2>
+      <table>
+        <thead>
+          <tr><th>Date</th><th>Sent</th><th>Failed</th><th>Cumulative</th></tr>
+        </thead>
+        <tbody id="daily-tbody">
+          <tr><td colspan="4" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Recent replies -->
+    <div class="section">
+      <h2>Recent Replies</h2>
+      <div class="reply-list" id="reply-list">
+        <div class="empty">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const PW_PARAM = "{{ pw_param }}";
+
+    function apiUrl(path) {
+      return PW_PARAM ? path + "?" + PW_PARAM.slice(1) : path;
+    }
+
+    function pct(a, b) {
+      if (!b) return "0%";
+      return Math.round(a / b * 100) + "%";
+    }
+
+    function formatTime(iso) {
+      if (!iso) return "";
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString("pt-PT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      } catch (e) { return iso; }
+    }
+
+    function badgeClass(cls) {
+      return "reply-badge badge-" + cls;
+    }
+    function badgeLabel(cls) {
+      return { demo: "Demo", interested: "Interested", neutral: "Replied", opt_out: "Opt-out" }[cls] || cls;
+    }
+    function guessClass(body) {
+      const t = body.toLowerCase();
+      const optOut = ["stop","parar","remover","cancelar","não quero","nao quero","não tenho interesse","nao tenho interesse","unsubscribe"];
+      const demo = ["reunião","reuniao","ligar","chamada","call","demo","agendar","marcar","disponível","disponivel","meet"];
+      const interested = ["interesse","interessado","interessada","sim","quero saber","mais informação","mais informacao","quero","pode enviar","como funciona"];
+      if (optOut.some(k => t.includes(k))) return "opt_out";
+      if (demo.some(k => t.includes(k))) return "demo";
+      if (interested.some(k => t.includes(k))) return "interested";
+      return "neutral";
+    }
+
+    async function loadData() {
+      document.getElementById("last-updated").textContent = "Loading…";
+      let data;
+      try {
+        const resp = await fetch(apiUrl("/api/dashboard"));
+        data = await resp.json();
+      } catch (e) {
+        document.getElementById("last-updated").textContent = "Error loading data";
+        return;
+      }
+
+      const s = data.summary;
+      const p = data.pipeline;
+      const today = new Date().toISOString().slice(0, 10);
+
+      // Cards
+      const cards = document.getElementById("cards").querySelectorAll(".card");
+      const vals = [s.total_leads, s.leads_remaining, s.total_sent, s.today_sent,
+                    s.reply_rate + "%", s.interested, s.demo_requests, s.opt_outs];
+      const subs = ["", "not yet contacted", "", "today",
+                    `${s.total_replied} / ${s.total_sent} replied`, "interested or demo", "", ""];
+      cards.forEach((card, i) => {
+        card.querySelector(".value").textContent = vals[i];
+        card.querySelector(".value").classList.remove("loading");
+        let sub = card.querySelector(".sub");
+        if (!sub && subs[i]) { sub = document.createElement("div"); sub.className = "sub"; card.appendChild(sub); }
+        if (sub) sub.textContent = subs[i];
+      });
+
+      // Funnel
+      const base = p.leads || 1;
+      [["leads", p.leads], ["contacted", p.contacted], ["replied", p.replied],
+       ["interested", p.interested], ["demo", p.demo]].forEach(([key, val]) => {
+        document.getElementById("cnt-" + key).textContent = val;
+        const pctVal = Math.round(val / base * 100);
+        document.getElementById("pct-" + key).textContent = pct(val, base);
+        document.getElementById("bar-" + key).style.height = Math.max(pctVal, 2) + "%";
+      });
+
+      // Daily table
+      const tbody = document.getElementById("daily-tbody");
+      if (!data.daily.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">No data yet.</td></tr>';
+      } else {
+        let cumulative = data.daily.reduce((sum, d) => sum + d.sent, 0);
+        let cumulativeRunning = cumulative;
+        tbody.innerHTML = data.daily.map(d => {
+          const rowCum = cumulativeRunning;
+          cumulativeRunning -= d.sent;
+          const isToday = d.date === today;
+          return `<tr class="${isToday ? 'today-row' : ''}">
+            <td>${d.date}${isToday ? " (today)" : ""}</td>
+            <td>${d.sent}</td>
+            <td>${d.failed || 0}</td>
+            <td>${rowCum}</td>
+          </tr>`;
+        }).join("");
+      }
+
+      // Recent replies
+      const replyList = document.getElementById("reply-list");
+      if (!data.recent_replies.length) {
+        replyList.innerHTML = '<div class="empty">No replies yet.</div>';
+      } else {
+        replyList.innerHTML = data.recent_replies.map(r => {
+          const cls = guessClass(r.body);
+          return `<div class="reply-item">
+            <span class="${badgeClass(cls)}">${badgeLabel(cls)}</span>
+            <div class="reply-content">
+              <div class="reply-name">${r.name || r.phone}</div>
+              <div class="reply-body">${r.body || "(no text)"}</div>
+              <div class="reply-time">${formatTime(r.timestamp)}</div>
+            </div>
+          </div>`;
+        }).join("");
+      }
+
+      document.getElementById("last-updated").textContent = "Updated " + new Date().toLocaleTimeString("pt-PT");
+    }
+
+    loadData();
+  </script>
+</body>
+</html>
