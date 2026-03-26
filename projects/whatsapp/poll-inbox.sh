@@ -29,7 +29,7 @@ if [ -z "${TWILIO_ACCOUNT_SID:-}" ] || [ -z "${TWILIO_API_KEY_SID:-}" ] || [ -z 
   exit 1
 fi
 
-WHATSAPP_TO="${TWILIO_WHATSAPP_FROM:-whatsapp:+15559382429}"
+WHATSAPP_TO="${TWILIO_WHATSAPP_FROM:-whatsapp:+351912508220}"
 # URL-encode for Twilio API query parameter (: → %3A, + → %2B)
 WHATSAPP_TO_ENCODED="$(echo "$WHATSAPP_TO" | sed 's/:/%3A/g; s/+/%2B/g')"
 
