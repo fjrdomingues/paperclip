@@ -25,7 +25,12 @@
       padding: 14px 16px;
       font-size: 18px;
       font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
+    #sidebar-header a { color: #a8e6cf; font-size: 13px; text-decoration: none; }
+    #sidebar-header a:hover { text-decoration: underline; }
     #contact-list {
       flex: 1;
       overflow-y: auto;
@@ -175,7 +180,7 @@
 <div id="app">
   <!-- Left: contact list -->
   <div id="sidebar">
-    <div id="sidebar-header">WhatsApp Viewer</div>
+    <div id="sidebar-header">WhatsApp Viewer <a href="/dashboard{{ pw_param }}">Dashboard →</a></div>
     <div id="contact-list">
       <div id="loading-contacts">Loading conversations…</div>
     </div>
