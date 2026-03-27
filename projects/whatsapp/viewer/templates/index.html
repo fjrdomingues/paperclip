@@ -214,7 +214,7 @@
 <div id="app">
   <!-- Left: contact list -->
   <div id="sidebar">
-    <div id="sidebar-header">WhatsApp Viewer <a href="/dashboard{{ pw_param }}">Dashboard →</a></div>
+    <div id="sidebar-header">WhatsApp Viewer <span style="display:flex;gap:12px;"><a href="/dashboard">Dashboard →</a><a href="/logout">Logout</a></span></div>
     <div id="stage-filter">
       <button class="filter-btn active" data-stage="has_reply">Has Reply</button>
       <button class="filter-btn" data-stage="all">All</button>
@@ -242,14 +242,13 @@
 </div>
 
 <script>
-  const PW_PARAM = "{{ pw_param }}";
   let currentPhone = null;
   let refreshTimer = null;
   let allConvos = {};
   let currentFilter = "has_reply";
 
   function apiUrl(path) {
-    return path + (PW_PARAM ? (path.includes("?") ? "&" : "?") + PW_PARAM.slice(1) : "");
+    return path;
   }
 
   const STAGE_LABELS = {
@@ -301,7 +300,7 @@
       const item = document.createElement("div");
       item.className = "contact-item" + (phone === currentPhone ? " active" : "");
       item.dataset.phone = phone;
-      const preview = last ? last.body : "";
+      const preview = last ? (last.body || (last.num_media > 0 ? "[Image]" : "")) : "";
       const time = last ? formatTime(last.time) : "";
       const badgeHtml = stage && stage !== "cold" && stage !== "contacted"
         ? `<span class="stage-badge stage-${escHtml(stage)}">${escHtml(STAGE_LABELS[stage] || stage)}</span>`
@@ -357,8 +356,25 @@
       wrap.className = `bubble-wrap ${msg.direction}`;
       const bubble = document.createElement("div");
       bubble.className = `bubble ${msg.direction}`;
+
+      let mediaHtml = "";
+      if (msg.num_media > 0 && msg.media_urls && msg.media_urls.length > 0) {
+        msg.media_urls.forEach(media => {
+          if (media.content_type && media.content_type.startsWith("image/")) {
+            mediaHtml += `<img src="${escHtml(media.url)}" style="max-width:100%;border-radius:6px;margin-bottom:4px;cursor:pointer;" onclick="window.open(this.src)" loading="lazy">`;
+          } else {
+            const typeLabel = media.content_type || "unknown";
+            mediaHtml += `<span style="display:inline-block;background:#e0e0e0;color:#555;font-size:12px;padding:2px 8px;border-radius:4px;margin-bottom:4px;">[Media: ${escHtml(typeLabel)}]</span>`;
+          }
+        });
+      } else if (msg.num_media > 0) {
+        mediaHtml = `<span style="display:inline-block;background:#e0e0e0;color:#555;font-size:12px;padding:2px 8px;border-radius:4px;margin-bottom:4px;">[Media]</span>`;
+      }
+
+      const bodyHtml = msg.body ? escHtml(msg.body) : "";
       bubble.innerHTML = `
-        ${escHtml(msg.body)}
+        ${mediaHtml}
+        ${bodyHtml}
         <div class="bubble-meta">${escHtml(formatTime(msg.time))} ${msg.direction === "sent" ? escHtml(statusIcon(msg.status)) : ""}</div>
       `;
       wrap.appendChild(bubble);

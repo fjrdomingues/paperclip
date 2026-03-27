@@ -8,10 +8,12 @@ Runs on port 5050.
 import os
 import sys
 from datetime import datetime, date, timezone
+from functools import wraps
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request, abort
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for, abort
+import requests as http_requests
 
 try:
     from zoneinfo import ZoneInfo
@@ -43,6 +45,25 @@ client = Client(TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, account_sid=TWILIO_AC
 
 app = Flask(__name__)
 app.json.sort_keys = False
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if VIEWER_PASSWORD and not session.get("authenticated"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def api_login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if VIEWER_PASSWORD and not session.get("authenticated"):
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated
 
 
 def format_time(iso_str):
@@ -72,25 +93,51 @@ def get_conversations():
             continue
         phone = m.to.replace("whatsapp:", "")
         date_sent = m.date_sent.isoformat() if m.date_sent else ""
-        all_msgs.append({
+        msg_dict = {
             "phone": phone,
             "body": m.body or "",
             "time": date_sent,
             "direction": "sent",
             "status": m.status,
-        })
+            "num_media": int(m.num_media or 0),
+            "media_urls": [],
+        }
+        if msg_dict["num_media"] > 0:
+            try:
+                for media in m.media.list():
+                    url = f"/api/media/{m.sid}/{media.sid}"
+                    msg_dict["media_urls"].append({
+                        "url": url,
+                        "content_type": media.content_type or "",
+                    })
+            except Exception:
+                pass
+        all_msgs.append(msg_dict)
     for m in received:
         if not m.from_ or not m.from_.startswith("whatsapp:"):
             continue
         phone = m.from_.replace("whatsapp:", "")
         date_sent = m.date_sent.isoformat() if m.date_sent else ""
-        all_msgs.append({
+        msg_dict = {
             "phone": phone,
             "body": m.body or "",
             "time": date_sent,
             "direction": "received",
             "status": m.status,
-        })
+            "num_media": int(m.num_media or 0),
+            "media_urls": [],
+        }
+        if msg_dict["num_media"] > 0:
+            try:
+                for media in m.media.list():
+                    url = f"/api/media/{m.sid}/{media.sid}"
+                    msg_dict["media_urls"].append({
+                        "url": url,
+                        "content_type": media.content_type or "",
+                    })
+            except Exception:
+                pass
+        all_msgs.append(msg_dict)
 
     convos = {}
     for msg in all_msgs:
@@ -105,19 +152,42 @@ def get_conversations():
     return convos
 
 
-def check_password():
-    if VIEWER_PASSWORD and request.args.get("pw") != VIEWER_PASSWORD:
-        abort(401)
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        pw = request.form.get("password", "")
+        if not VIEWER_PASSWORD or pw == VIEWER_PASSWORD:
+            session["authenticated"] = True
+            return redirect(url_for("index"))
+        error = "Incorrect password."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 @app.route("/")
+@login_required
 def index():
-    check_password()
-    pw_param = f"?pw={VIEWER_PASSWORD}" if VIEWER_PASSWORD else ""
-    return render_template("index.html", pw_param=pw_param)
+    return render_template("index.html")
+
+
+@app.route("/api/media/<message_sid>/<media_sid>")
+@login_required
+def api_media_proxy(message_sid, media_sid):
+    twilio_url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages/{message_sid}/Media/{media_sid}"
+    resp = http_requests.get(twilio_url, auth=(TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET), timeout=15)
+    if resp.status_code != 200:
+        abort(resp.status_code)
+    return Response(resp.content, content_type=resp.headers.get("Content-Type", "application/octet-stream"))
 
 
 @app.route("/api/conversations")
+@api_login_required
 def api_conversations():
     convos = get_conversations()
 
@@ -157,6 +227,7 @@ def api_conversations():
 
 
 @app.route("/api/conversations/<path:phone>")
+@api_login_required
 def api_conversation(phone):
     convos = get_conversations()
     messages = convos.get(phone, [])
@@ -164,6 +235,7 @@ def api_conversation(phone):
 
 
 @app.route("/api/send", methods=["POST"])
+@api_login_required
 def api_send():
     data = request.get_json()
     if not data or not data.get("to") or not data.get("body"):
@@ -183,16 +255,14 @@ def api_send():
 
 
 @app.route("/dashboard")
+@login_required
 def dashboard():
-    check_password()
-    pw_param = f"?pw={VIEWER_PASSWORD}" if VIEWER_PASSWORD else ""
-    return render_template("dashboard.html", pw_param=pw_param)
+    return render_template("dashboard.html")
 
 
 @app.route("/api/dashboard")
+@api_login_required
 def api_dashboard():
-    check_password()
-
     conn = whatsapp_db.get_db()
     stats = whatsapp_db.get_pipeline_stats(conn)
     stages = stats["stages"]
@@ -205,6 +275,7 @@ def api_dashboard():
     opt_outs = stages.get("opted_out", 0)
     interested = stages.get("interested", 0)
     demo_requests = stages.get("demo_requested", 0)
+    auto_responder = stages.get("auto_responder", 0)
 
     # Daily breakdown from SQLite
     daily_list = whatsapp_db.get_daily_stats(conn, days=30)
@@ -254,6 +325,7 @@ def api_dashboard():
             "leads": total_leads,
             "contacted": total_sent,
             "replied": total_replied,
+            "auto_responder": auto_responder,
             "interested": interested + demo_requests,
             "demo": demo_requests,
         },

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Viewer – Login</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .login-box {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+      padding: 36px 32px;
+      width: 100%;
+      max-width: 360px;
+    }
+    .login-header {
+      background: #075e54;
+      color: #fff;
+      border-radius: 8px 8px 0 0;
+      padding: 18px 24px;
+      margin: -36px -32px 28px;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 6px;
+    }
+    input[type="password"] {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 15px;
+      outline: none;
+    }
+    input[type="password"]:focus { border-color: #075e54; }
+    .error {
+      color: #c0392b;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+    button {
+      margin-top: 20px;
+      width: 100%;
+      background: #075e54;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button:hover { background: #054d44; }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <div class="login-header">WhatsApp Viewer</div>
+    <form method="POST" action="/login">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autofocus placeholder="Enter password">
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>

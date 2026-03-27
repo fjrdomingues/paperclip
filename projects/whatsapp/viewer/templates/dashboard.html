@@ -94,8 +94,9 @@
     .funnel-step.step-1 .funnel-bar { background: #2ecc71; }
     .funnel-step.step-2 .funnel-bar { background: #3498db; }
     .funnel-step.step-3 .funnel-bar { background: #9b59b6; }
-    .funnel-step.step-4 .funnel-bar { background: #e67e22; }
-    .funnel-step.step-5 .funnel-bar { background: #e74c3c; }
+    .funnel-step.step-4 .funnel-bar { background: #95a5a6; }
+    .funnel-step.step-5 .funnel-bar { background: #e67e22; }
+    .funnel-step.step-6 .funnel-bar { background: #e74c3c; }
 
     .funnel-count { font-size: 18px; font-weight: 700; }
     .funnel-label { font-size: 11px; color: #888; text-align: center; }
@@ -147,7 +148,7 @@
 <body>
   <header>
     <h1>📊 Outreach Dashboard</h1>
-    <a href="/{{ pw_param }}">← Conversations</a>
+    <span style="display:flex;gap:16px;"><a href="/">← Conversations</a><a href="/logout" style="color:#a8e6cf;font-size:14px;text-decoration:none;">Logout</a></span>
   </header>
 
   <div class="container">
@@ -191,12 +192,18 @@
           <div class="funnel-pct" id="pct-replied">…</div>
         </div>
         <div class="funnel-step step-4">
+          <div class="funnel-bar-wrap"><div class="funnel-bar" id="bar-auto_responder" style="height:0%"></div></div>
+          <div class="funnel-count" id="cnt-auto_responder">…</div>
+          <div class="funnel-label">Auto-reply</div>
+          <div class="funnel-pct" id="pct-auto_responder">…</div>
+        </div>
+        <div class="funnel-step step-5">
           <div class="funnel-bar-wrap"><div class="funnel-bar" id="bar-interested" style="height:0%"></div></div>
           <div class="funnel-count" id="cnt-interested">…</div>
           <div class="funnel-label">Interested</div>
           <div class="funnel-pct" id="pct-interested">…</div>
         </div>
-        <div class="funnel-step step-5">
+        <div class="funnel-step step-6">
           <div class="funnel-bar-wrap"><div class="funnel-bar" id="bar-demo" style="height:0%"></div></div>
           <div class="funnel-count" id="cnt-demo">…</div>
           <div class="funnel-label">Demo</div>
@@ -228,10 +235,8 @@
   </div>
 
   <script>
-    const PW_PARAM = "{{ pw_param }}";
-
     function apiUrl(path) {
-      return PW_PARAM ? path + "?" + PW_PARAM.slice(1) : path;
+      return path;
     }
 
     function pct(a, b) {
@@ -312,7 +317,7 @@
       // Funnel
       const base = p.leads || 1;
       [["leads", p.leads], ["contacted", p.contacted], ["replied", p.replied],
-       ["interested", p.interested], ["demo", p.demo]].forEach(([key, val]) => {
+       ["auto_responder", p.auto_responder], ["interested", p.interested], ["demo", p.demo]].forEach(([key, val]) => {
         document.getElementById("cnt-" + key).textContent = val;
         const pctVal = Math.round(val / base * 100);
         document.getElementById("pct-" + key).textContent = pct(val, base);
