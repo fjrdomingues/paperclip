@@ -28,8 +28,15 @@ import sys
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import ssl
 from urllib import request, parse
 from urllib.error import HTTPError
+
+try:
+    import certifi
+    _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    _SSL_CTX = ssl.create_default_context()
 
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
@@ -48,22 +55,7 @@ FOLLOWUP_LOG_FIELDS = ["phone", "name", "agency", "event", "detail", "timestamp"
 DNC_FIELDS = ["phone", "name", "agency", "reason", "reply_body", "added_at"]
 REVIEW_QUEUE_FIELDS = ["phone", "name", "agency", "reply_body", "reply_at", "added_at"]
 
-# Portuguese opt-out keywords (case-insensitive)
-OPTOUT_KEYWORDS = [
-    "stop", "parar", "cancelar", "remover", "sair",
-    "não quero", "nao quero", "desinscrever", "desinscrição",
-    "não me contacte", "nao me contacte", "remova", "deixe de",
-    "não estou interessado", "nao estou interessado",
-]
-
-# Portuguese interest keywords (case-insensitive)
-INTEREST_KEYWORDS = [
-    "sim", "quero", "interesse", "interessado", "interessada",
-    "mais informação", "mais informacao", "como funciona",
-    "preço", "preco", "quanto custa", "quanto é", "quanto e",
-    "demo", "experimentar", "saber mais", "ver mais",
-    "ok", "claro", "com certeza", "pode ser", "gostaria",
-]
+import db as whatsapp_db
 
 RATE_LIMIT_DELAY = 1.5  # seconds between sends
 
@@ -106,20 +98,6 @@ def parse_iso(ts_str):
         return datetime.fromisoformat(ts_str)
     except ValueError:
         return None
-
-
-def classify_reply(body):
-    """Classify a reply body as 'optout', 'interested', or 'other'."""
-    if not body:
-        return "other"
-    lower = body.lower().strip()
-    for kw in OPTOUT_KEYWORDS:
-        if kw in lower:
-            return "optout"
-    for kw in INTEREST_KEYWORDS:
-        if kw in lower:
-            return "interested"
-    return "other"
 
 
 def load_sent_log():
@@ -251,7 +229,7 @@ def send_template(account_sid, api_key_sid, api_key_secret, from_number, to_numb
     req.add_header("Authorization", f"Basic {credentials}")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
     try:
-        with request.urlopen(req) as resp:
+        with request.urlopen(req, context=_SSL_CTX) as resp:
             return json.loads(resp.read())
     except HTTPError as e:
         body = e.read().decode()
@@ -339,12 +317,14 @@ def main():
         valid_replies.sort(key=lambda m: m.get("timestamp", ""))
 
         if valid_replies:
-            # Process most relevant reply (first opt-out wins; else first interest; else first)
-            optout_reply = next((m for m in valid_replies if classify_reply(m.get("body", "")) == "optout"), None)
-            interest_reply = next((m for m in valid_replies if classify_reply(m.get("body", "")) == "interested"), None)
+            # Look up the LLM-assigned stage from SQLite
+            _db = whatsapp_db.get_db()
+            stage_row = whatsapp_db.get_contact_stage(_db, phone)
+            _db.close()
+            stage = stage_row["stage"] if stage_row else "cold"
 
-            if optout_reply and not contact_state.get("optout_processed"):
-                body = optout_reply.get("body", "")
+            if stage == "opted_out" and not contact_state.get("optout_processed"):
+                body = valid_replies[0].get("body", "")
                 print(f"  OPT-OUT: {name} ({phone}) — '{body[:60]}'")
                 if not args.dry_run:
                     add_to_dnc(phone, name, agency, "opt-out reply", body)
@@ -356,9 +336,9 @@ def main():
                 stats["optout"] += 1
                 continue
 
-            if interest_reply and not contact_state.get("interest_queued"):
-                body = interest_reply.get("body", "")
-                reply_at = interest_reply.get("timestamp", "")
+            if stage in ("interested", "demo_requested") and not contact_state.get("interest_queued"):
+                body = valid_replies[0].get("body", "")
+                reply_at = valid_replies[0].get("timestamp", "")
                 print(f"  INTERESTED: {name} ({phone}) — '{body[:60]}' → added to review queue")
                 if not args.dry_run:
                     add_to_review_queue(phone, name, agency, body, reply_at)
@@ -370,12 +350,22 @@ def main():
                 # No follow-up needed for interested leads
                 continue
 
-            # If they replied (any kind and not opt-out/interested) and no follow-up sent, skip
-            if valid_replies and not contact_state.get("followup_sent") and not contact_state.get("interest_queued"):
+            if stage == "replied" and not contact_state.get("followup_sent") and not contact_state.get("interest_queued"):
                 body = valid_replies[0].get("body", "")
                 print(f"  REPLIED (other): {name} ({phone}) — '{body[:60]}' → no follow-up needed")
                 if not args.dry_run:
                     log_event(phone, name, agency, "replied_other", f"Reply: {body[:100]}")
+                    contact_state["replied_other"] = True
+                    state[phone] = contact_state
+                stats["followup_skipped"] += 1
+                continue
+
+            # stage in ("cold", "not_contacted") with valid_replies: LLM hasn't classified yet, treat as replied
+            if stage in ("cold", "not_contacted") and not contact_state.get("followup_sent") and not contact_state.get("interest_queued"):
+                body = valid_replies[0].get("body", "")
+                print(f"  REPLIED (unclassified): {name} ({phone}) — '{body[:60]}' → no follow-up needed")
+                if not args.dry_run:
+                    log_event(phone, name, agency, "replied_other", f"Reply (unclassified): {body[:100]}")
                     contact_state["replied_other"] = True
                     state[phone] = contact_state
                 stats["followup_skipped"] += 1
