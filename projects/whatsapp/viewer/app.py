@@ -5,10 +5,8 @@ Flask app to view WhatsApp conversations and track outreach metrics.
 Runs on port 5050.
 """
 
-import csv
-import json
 import os
-from collections import defaultdict
+import sys
 from datetime import datetime, date, timezone
 from pathlib import Path
 
@@ -19,6 +17,10 @@ try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore
+
+# Add parent dir so we can import db module
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import db as whatsapp_db
 
 # Load env from shared telegram .env
 dotenv_path = os.path.join(os.path.dirname(__file__), "..", "..", "telegram", ".env")
@@ -34,36 +36,13 @@ LISBON_TZ = ZoneInfo("Europe/Lisbon")
 
 SCRIPT_DIR = Path(__file__).parent
 WHATSAPP_DIR = SCRIPT_DIR.parent
-PROJECT_ROOT = WHATSAPP_DIR.parent.parent
-SENT_LOG_FILE = WHATSAPP_DIR / "data" / "sent_log.csv"
-INBOX_FILE = WHATSAPP_DIR / "data" / "inbox.jsonl"
-LEADS_FILE = PROJECT_ROOT / "projects" / "growth" / "data" / "leads.csv"
-
-OPT_OUT_KEYWORDS = ["stop", "parar", "remover", "cancelar", "não quero", "nao quero",
-                    "não tenho interesse", "nao tenho interesse", "não me contacte",
-                    "nao me contacte", "descadastrar", "sair", "unsubscribe"]
-INTERESTED_KEYWORDS = ["interesse", "interessado", "interessada", "sim", "quero saber",
-                       "mais informação", "mais informacao", "quero", "pode enviar",
-                       "como funciona", "fale mais", "diz-me mais", "conta-me mais"]
-DEMO_KEYWORDS = ["reunião", "reuniao", "ligar", "chamada", "call", "demo", "agendar",
-                 "marcar", "disponível", "disponivel", "quando podemos", "meet"]
-
-
-def classify_reply(body: str) -> str:
-    text = body.lower()
-    if any(k in text for k in OPT_OUT_KEYWORDS):
-        return "opt_out"
-    if any(k in text for k in DEMO_KEYWORDS):
-        return "demo"
-    if any(k in text for k in INTERESTED_KEYWORDS):
-        return "interested"
-    return "neutral"
 
 # Init Twilio client using API key auth
 from twilio.rest import Client
 client = Client(TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, account_sid=TWILIO_ACCOUNT_SID)
 
 app = Flask(__name__)
+app.json.sort_keys = False
 
 
 def format_time(iso_str):
@@ -192,133 +171,71 @@ def dashboard():
 def api_dashboard():
     check_password()
 
-    # Load sent log
-    sent_rows = []
-    if SENT_LOG_FILE.exists():
-        with open(SENT_LOG_FILE, newline="") as f:
-            sent_rows = list(csv.DictReader(f))
+    conn = whatsapp_db.get_db()
+    stats = whatsapp_db.get_pipeline_stats(conn)
+    stages = stats["stages"]
 
-    # Load inbox
-    inbox = []
-    if INBOX_FILE.exists():
-        with open(INBOX_FILE) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        inbox.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass
-
-    # Load leads
-    leads = []
-    if LEADS_FILE.exists():
-        with open(LEADS_FILE, newline="") as f:
-            leads = list(csv.DictReader(f))
-
-    # --- Sent stats ---
-    sent_by_phone = defaultdict(list)
-    for row in sent_rows:
-        sent_by_phone[row["phone"]].append(row)
-
-    all_sent_phones = {phone for phone, rows in sent_by_phone.items()
-                       if any(r.get("status") == "sent" for r in rows)}
-
-    # Daily breakdown
-    daily = defaultdict(lambda: {"sent": 0, "failed": 0})
-    for row in sent_rows:
-        day = row.get("sent_at", "")[:10]
-        if not day:
-            continue
-        if row.get("status") == "sent":
-            daily[day]["sent"] += 1
-        else:
-            daily[day]["failed"] += 1
-
-    daily_list = sorted(
-        [{"date": d, **v} for d, v in daily.items()],
-        key=lambda x: x["date"],
-        reverse=True,
-    )
-
-    # --- Inbox: classify replies ---
-    replied_phones = defaultdict(list)
-    for msg in inbox:
-        phone = msg.get("from", "").strip()
-        if not phone.startswith("+"):
-            phone = "+" + phone.lstrip("0")
-        replied_phones[phone].append(msg)
-
-    opt_outs, demo_requests, interested_list, neutral_list = [], [], [], []
-    replied_from_contacted = set()
-
-    for phone, msgs in replied_phones.items():
-        if phone not in all_sent_phones:
-            continue
-        replied_from_contacted.add(phone)
-        name = next(
-            (r["name"] for r in sent_by_phone.get(phone, []) if r.get("name")),
-            phone,
-        )
-        for msg in msgs:
-            body = msg.get("body", "")
-            cls = classify_reply(body)
-            entry = {
-                "phone": phone,
-                "name": name,
-                "body": body[:120],
-                "timestamp": msg.get("timestamp", ""),
-            }
-            if cls == "opt_out":
-                opt_outs.append(entry)
-            elif cls == "demo":
-                demo_requests.append(entry)
-            elif cls == "interested":
-                interested_list.append(entry)
-            else:
-                neutral_list.append(entry)
-
-    # Leads remaining (not yet contacted)
-    leads_with_phone = [l for l in leads if l.get("phone", "").strip()]
-    remaining = [l for l in leads_with_phone
-                 if l.get("phone", "").strip() not in all_sent_phones]
-
-    total_sent = len(all_sent_phones)
-    total_replied = len(replied_from_contacted)
+    total_leads = stats["total_leads"]
+    total_sent = stats["contacted"]
+    total_replied = stats["replied"]
     reply_rate = round(total_replied / total_sent * 100, 1) if total_sent else 0
-    interest_count = len({e["phone"] for e in demo_requests + interested_list})
 
-    # Pipeline stages
-    pipeline = {
-        "leads": len(leads_with_phone),
-        "contacted": total_sent,
-        "replied": total_replied,
-        "interested": interest_count,
-        "demo": len({e["phone"] for e in demo_requests}),
-    }
+    opt_outs = stages.get("opted_out", 0)
+    interested = stages.get("interested", 0)
+    demo_requests = stages.get("demo_requested", 0)
 
-    # Recent replies (last 10, sorted newest first)
-    all_replies = demo_requests + interested_list + neutral_list + opt_outs
-    all_replies.sort(key=lambda x: x["timestamp"], reverse=True)
-    recent_replies = all_replies[:10]
+    # Daily breakdown from SQLite
+    daily_list = whatsapp_db.get_daily_stats(conn, days=30)
 
-    today = date.today().isoformat()
-    today_sent = daily.get(today, {}).get("sent", 0)
+    today_str = date.today().isoformat()
+    today_sent = 0
+    for d in daily_list:
+        if d["day"] == today_str:
+            today_sent = d["sent"]
+            break
+
+    # Format daily for API compatibility
+    daily_formatted = [{"date": d["day"], "sent": d["sent"], "failed": d["failed"]} for d in daily_list]
+
+    # Recent replies (last 10 inbound from contacted phones)
+    recent = conn.execute(
+        """SELECT im.phone, l.name, im.body, im.received_at as timestamp, cs.stage
+           FROM inbound_messages im
+           LEFT JOIN leads l ON im.phone = l.phone
+           LEFT JOIN contact_stages cs ON im.phone = cs.phone
+           INNER JOIN outreach_messages om ON im.phone = om.phone AND om.status = 'sent'
+           ORDER BY im.received_at DESC
+           LIMIT 10"""
+    ).fetchall()
+    recent_replies = [
+        {"phone": r["phone"], "name": r["name"] or r["phone"],
+         "body": (r["body"] or "")[:120], "timestamp": r["timestamp"] or "",
+         "stage": r["stage"] or ""}
+        for r in recent
+    ]
+
+    conn.close()
 
     return jsonify({
         "summary": {
-            "total_leads": len(leads_with_phone),
-            "leads_remaining": len(remaining),
+            "total_leads": total_leads,
+            "leads_remaining": total_leads - total_sent,
             "total_sent": total_sent,
             "today_sent": today_sent,
             "total_replied": total_replied,
             "reply_rate": reply_rate,
-            "opt_outs": len(opt_outs),
-            "interested": interest_count,
-            "demo_requests": len({e["phone"] for e in demo_requests}),
+            "opt_outs": opt_outs,
+            "interested": interested + demo_requests,
+            "demo_requests": demo_requests,
         },
-        "pipeline": pipeline,
-        "daily": daily_list[:30],
+        "pipeline": {
+            "leads": total_leads,
+            "contacted": total_sent,
+            "replied": total_replied,
+            "interested": interested + demo_requests,
+            "demo": demo_requests,
+        },
+        "daily": daily_formatted[:30],
         "recent_replies": recent_replies,
     })
 

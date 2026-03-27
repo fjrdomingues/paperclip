@@ -251,12 +251,28 @@
       return "reply-badge badge-" + cls;
     }
     function badgeLabel(cls) {
-      return { demo: "Demo", interested: "Interested", neutral: "Replied", opt_out: "Opt-out" }[cls] || cls;
+      return { demo: "Demo", interested: "Interested", neutral: "Replied", opt_out: "Opt-out", auto_responder: "Auto-reply" }[cls] || cls;
+    }
+    function stageLabel(stage) {
+      const map = {
+        demo_requested: "Demo", interested: "Interested",
+        opted_out: "Opt-out", auto_responder: "Auto-reply",
+        replied: "Replied", contacted: "Contacted", cold: "Cold"
+      };
+      return map[stage] || stage;
+    }
+    function stageToClass(stage) {
+      const map = {
+        demo_requested: "demo", interested: "interested",
+        opted_out: "opt_out", auto_responder: "neutral",
+        replied: "neutral", contacted: "neutral", cold: "neutral"
+      };
+      return map[stage] || "neutral";
     }
     function guessClass(body) {
       const t = body.toLowerCase();
       const optOut = ["stop","parar","remover","cancelar","não quero","nao quero","não tenho interesse","nao tenho interesse","unsubscribe"];
-      const demo = ["reunião","reuniao","ligar","chamada","call","demo","agendar","marcar","disponível","disponivel","meet"];
+      const demo = ["reunião","reuniao","ligar","chamada","call","demo","agendar","marcar","meet"];
       const interested = ["interesse","interessado","interessada","sim","quero saber","mais informação","mais informacao","quero","pode enviar","como funciona"];
       if (optOut.some(k => t.includes(k))) return "opt_out";
       if (demo.some(k => t.includes(k))) return "demo";
@@ -329,9 +345,10 @@
         replyList.innerHTML = '<div class="empty">No replies yet.</div>';
       } else {
         replyList.innerHTML = data.recent_replies.map(r => {
-          const cls = guessClass(r.body);
+          const cls = r.stage ? stageToClass(r.stage) : guessClass(r.body);
+          const label = r.stage ? stageLabel(r.stage) : badgeLabel(cls);
           return `<div class="reply-item">
-            <span class="${badgeClass(cls)}">${badgeLabel(cls)}</span>
+            <span class="${badgeClass(cls)}">${label}</span>
             <div class="reply-content">
               <div class="reply-name">${r.name || r.phone}</div>
               <div class="reply-body">${r.body || "(no text)"}</div>
