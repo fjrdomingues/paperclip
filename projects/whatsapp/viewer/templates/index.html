@@ -31,6 +31,40 @@
     }
     #sidebar-header a { color: #a8e6cf; font-size: 13px; text-decoration: none; }
     #sidebar-header a:hover { text-decoration: underline; }
+    #stage-filter {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 8px 10px;
+      background: #fafafa;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .filter-btn {
+      padding: 4px 10px;
+      border: 1px solid #ccc;
+      border-radius: 14px;
+      background: #fff;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .filter-btn:hover { background: #f0f0f0; }
+    .filter-btn.active { background: #075e54; color: #fff; border-color: #075e54; }
+    .stage-badge {
+      display: inline-block;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 8px;
+      font-weight: 600;
+      margin-left: 6px;
+    }
+    .stage-interested { background: #d5f5e3; color: #27ae60; }
+    .stage-demo_requested { background: #fdebd0; color: #e67e22; }
+    .stage-opted_out { background: #fde8e8; color: #c0392b; }
+    .stage-auto_responder { background: #eaf0fb; color: #3498db; }
+    .stage-replied { background: #e8e8fd; color: #6c5ce7; }
+    .stage-contacted { background: #f0f0f0; color: #888; }
+    .stage-cold { background: #f0f0f0; color: #aaa; }
     #contact-list {
       flex: 1;
       overflow-y: auto;
@@ -181,6 +215,15 @@
   <!-- Left: contact list -->
   <div id="sidebar">
     <div id="sidebar-header">WhatsApp Viewer <a href="/dashboard{{ pw_param }}">Dashboard →</a></div>
+    <div id="stage-filter">
+      <button class="filter-btn active" data-stage="has_reply">Has Reply</button>
+      <button class="filter-btn" data-stage="all">All</button>
+      <button class="filter-btn" data-stage="interested">Interested</button>
+      <button class="filter-btn" data-stage="demo_requested">Demo</button>
+      <button class="filter-btn" data-stage="auto_responder">Auto-reply</button>
+      <button class="filter-btn" data-stage="opted_out">Opted Out</button>
+      <button class="filter-btn" data-stage="replied">Replied</button>
+    </div>
     <div id="contact-list">
       <div id="loading-contacts">Loading conversations…</div>
     </div>
@@ -203,10 +246,16 @@
   let currentPhone = null;
   let refreshTimer = null;
   let allConvos = {};
+  let currentFilter = "has_reply";
 
   function apiUrl(path) {
     return path + (PW_PARAM ? (path.includes("?") ? "&" : "?") + PW_PARAM.slice(1) : "");
   }
+
+  const STAGE_LABELS = {
+    interested: "Interested", demo_requested: "Demo", opted_out: "Opt-out",
+    auto_responder: "Auto-reply", replied: "Replied", contacted: "Contacted", cold: "Cold"
+  };
 
   function formatTime(iso) {
     if (!iso) return "";
@@ -227,7 +276,8 @@
 
   async function loadConversations() {
     try {
-      const res = await fetch("/api/conversations");
+      const url = apiUrl(`/api/conversations?stage=${currentFilter}`);
+      const res = await fetch(url);
       allConvos = await res.json();
       renderContactList(allConvos);
     } catch (e) {
@@ -244,16 +294,21 @@
       return;
     }
     phones.forEach(phone => {
-      const msgs = convos[phone].messages || [];
+      const convo = convos[phone];
+      const msgs = convo.messages || [];
       const last = msgs[msgs.length - 1];
+      const stage = convo.stage || "cold";
       const item = document.createElement("div");
       item.className = "contact-item" + (phone === currentPhone ? " active" : "");
       item.dataset.phone = phone;
       const preview = last ? last.body : "";
       const time = last ? formatTime(last.time) : "";
+      const badgeHtml = stage && stage !== "cold" && stage !== "contacted"
+        ? `<span class="stage-badge stage-${escHtml(stage)}">${escHtml(STAGE_LABELS[stage] || stage)}</span>`
+        : "";
       item.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:baseline;">
-          <span class="contact-phone">${escHtml(phone)}</span>
+          <span class="contact-phone">${escHtml(phone)}${badgeHtml}</span>
           <span class="contact-time">${escHtml(time)}</span>
         </div>
         <span class="contact-preview">${escHtml(preview.slice(0, 60))}</span>
@@ -354,6 +409,16 @@
       e.preventDefault();
       sendMessage();
     }
+  });
+
+  // Stage filter buttons
+  document.querySelectorAll(".filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFilter = btn.dataset.stage;
+      loadConversations();
+    });
   });
 
   // Initial load

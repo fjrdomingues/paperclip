@@ -120,12 +120,34 @@ def index():
 @app.route("/api/conversations")
 def api_conversations():
     convos = get_conversations()
+
+    # Enrich with stage info from SQLite
+    conn = whatsapp_db.get_db()
+    stages = {}
+    for row in conn.execute("SELECT phone, stage FROM contact_stages").fetchall():
+        stages[row["phone"]] = row["stage"]
+    conn.close()
+
+    stage_filter = request.args.get("stage", "")
+
     result = {}
     for phone, messages in convos.items():
         last_time = messages[-1]["time"] if messages else ""
+        phone_stage = stages.get(phone, "cold")
+        has_inbound = any(m["direction"] == "received" for m in messages)
+
+        if stage_filter and stage_filter != "all":
+            if stage_filter == "has_reply":
+                if not has_inbound:
+                    continue
+            elif phone_stage != stage_filter:
+                continue
+
         result[phone] = {
             "messages": messages,
             "last_message_time": last_time,
+            "stage": phone_stage,
+            "has_reply": has_inbound,
         }
     # Sort by most recent first
     sorted_result = dict(
