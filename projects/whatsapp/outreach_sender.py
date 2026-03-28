@@ -27,13 +27,22 @@ import sys
 import time
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
+import ssl
 from urllib import request, parse
 from urllib.error import HTTPError
+
+try:
+    import certifi
+    _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    _SSL_CTX = ssl.create_default_context()
 
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore
+
+import db as whatsapp_db
 
 LISBON_TZ = ZoneInfo("Europe/Lisbon")
 BUSINESS_HOURS_START = 9   # 09:00
@@ -146,7 +155,7 @@ def send_template(account_sid, api_key_sid, api_key_secret, from_number, to_numb
     req.add_header("Authorization", f"Basic {credentials}")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
     try:
-        with request.urlopen(req) as resp:
+        with request.urlopen(req, context=_SSL_CTX) as resp:
             return json.loads(resp.read())
     except HTTPError as e:
         body = e.read().decode()
@@ -233,7 +242,7 @@ def post_paperclip_alert(error_code, error_msg, phone, template_name):
     req.add_header("Authorization", f"Bearer {api_key}")
     req.add_header("Content-Type", "application/json")
     try:
-        with request.urlopen(req, timeout=10) as resp:
+        with request.urlopen(req, timeout=10, context=_SSL_CTX) as resp:
             print(f"  [ALERT] Paperclip alert posted (status {resp.status}).")
     except Exception as exc:
         print(f"  [ALERT] Failed to post Paperclip alert: {exc}", file=sys.stderr)
@@ -326,6 +335,14 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
         "error": error_msg if status not in ("queued", "sent") else "",
     }
     append_sent_log(entry)
+    # Dual-write to SQLite
+    _db = whatsapp_db.get_db()
+    whatsapp_db.add_outreach_message(_db, entry["phone"], entry["template_name"],
+                                     entry["template_sid"], entry["twilio_sid"],
+                                     entry["status"], entry["error"], entry["sent_at"])
+    whatsapp_db.update_contact_stage(_db, entry["phone"], "contacted", "system")
+    _db.commit()
+    _db.close()
 
     if status in ("queued", "sent"):
         print(f"OK (SID: {twilio_sid})")
@@ -467,6 +484,14 @@ def main():
             "error": error if status not in ("queued", "sent") else "",
         }
         append_sent_log(entry)
+        # Dual-write to SQLite
+        _db = whatsapp_db.get_db()
+        whatsapp_db.add_outreach_message(_db, entry["phone"], entry["template_name"],
+                                         entry["template_sid"], entry["twilio_sid"],
+                                         entry["status"], entry["error"], entry["sent_at"])
+        whatsapp_db.update_contact_stage(_db, entry["phone"], "contacted", "system")
+        _db.commit()
+        _db.close()
 
         if status in ("queued", "sent"):
             print(f"OK (SID: {twilio_sid})")

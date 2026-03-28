@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.paperclip.whatsapp-deploy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>
+SERVER="root@64.226.74.167"
+REMOTE_APP="/root/apps/whatsapp-viewer"
+LOCAL_BASE="/Users/fabiodomingues/Desktop/Projects/paperclip/projects/whatsapp"
+LOG="/tmp/whatsapp-deploy-activity.log"
+C1=$(/usr/bin/rsync -az --itemize-changes --timeout=30 "$LOCAL_BASE/viewer/app.py" "$LOCAL_BASE/viewer/requirements.txt" "$LOCAL_BASE/db.py" "$SERVER:$REMOTE_APP/" 2>&amp;1)
+C2=$(/usr/bin/rsync -az --itemize-changes --timeout=30 "$LOCAL_BASE/viewer/templates/index.html" "$LOCAL_BASE/viewer/templates/dashboard.html" "$SERVER:$REMOTE_APP/templates/" 2>&amp;1)
+ALL="$C1$C2"
+if [ -z "$ALL" ]; then echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) no changes" >> "$LOG"; exit 0; fi
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) changes detected, deploying" >> "$LOG"
+ssh -o ConnectTimeout=15 "$SERVER" "cd $REMOTE_APP &amp;&amp; docker compose build --quiet &amp;&amp; docker compose up -d" >> "$LOG" 2>&amp;1
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) deploy complete" >> "$LOG"
+        </string>
+    </array>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/whatsapp-deploy.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/whatsapp-deploy.err</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin</string>
+        <key>HOME</key>
+        <string>/Users/fabiodomingues</string>
+    </dict>
+</dict>
+</plist>

@@ -195,10 +195,16 @@ wake_ceo() {
 LAST_UPDATE_ID="$(load_offset)"
 NEXT_OFFSET=$((LAST_UPDATE_ID + 1))
 
-RESPONSE="$(curl -fsS --max-time 30 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${NEXT_OFFSET}&timeout=5" 2>>"$LOG_FILE")" || {
-  echo "$(date -Iseconds) ERROR: getUpdates failed" >> "$LOG_FILE"
-  exit 1
-}
+RESPONSE=""
+for _attempt in 1 2 3; do
+  RESPONSE="$(curl -fsS --max-time 35 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${NEXT_OFFSET}&timeout=5" 2>>"$LOG_FILE")" && break
+  echo "$(date -Iseconds) WARN: getUpdates attempt ${_attempt}/3 failed, retrying in 3s..." >> "$LOG_FILE"
+  sleep 3
+done
+if [ -z "$RESPONSE" ]; then
+  echo "$(date -Iseconds) WARN: getUpdates failed after 3 attempts (transient, will retry next cycle)" >> "$LOG_FILE"
+  exit 0
+fi
 
 OK="$(printf '%s' "$RESPONSE" | jq -r '.ok')"
 if [ "$OK" != "true" ]; then
@@ -232,7 +238,7 @@ while IFS= read -r UPDATE; do
   VOICE_FILE_ID="$(printf '%s' "$MESSAGE" | jq -r '.voice.file_id // empty')"
   DOC_NAME="$(printf '%s' "$MESSAGE" | jq -r '.document.file_name // empty')"
   DOC_FILE_ID="$(printf '%s' "$MESSAGE" | jq -r '.document.file_id // empty')"
-  HAS_PHOTO="$(printf '%s' "$MESSAGE" | jq -r 'if .photo then "yes" else "" end')"
+  PHOTO_FILE_ID="$(printf '%s' "$MESSAGE" | jq -r 'if .photo then (.photo | sort_by(.file_size) | last | .file_id) else "" end')"
   HAS_VIDEO="$(printf '%s' "$MESSAGE" | jq -r 'if .video then "yes" else "" end')"
 
   # Determine message type and content
@@ -247,7 +253,7 @@ while IFS= read -r UPDATE; do
   elif [ -n "$DOC_NAME" ]; then
     MSG_TYPE="document"
     MSG_CONTENT="[Document: $DOC_NAME]"
-  elif [ -n "$HAS_PHOTO" ]; then
+  elif [ -n "$PHOTO_FILE_ID" ]; then
     MSG_TYPE="photo"
     MSG_CONTENT="[Photo]"
   elif [ -n "$HAS_VIDEO" ]; then
@@ -280,8 +286,9 @@ while IFS= read -r UPDATE; do
     --arg content "$MSG_CONTENT" \
     --arg voice_file_id "${VOICE_FILE_ID:-}" \
     --arg document_file_id "${DOC_FILE_ID:-}" \
+    --arg photo_file_id "${PHOTO_FILE_ID:-}" \
     --arg read "false" \
-    '{sender_name: $sender_name, sender_id: $sender_id, timestamp: $timestamp, type: $type, content: $content, voice_file_id: $voice_file_id, document_file_id: $document_file_id, read: $read}' \
+    '{sender_name: $sender_name, sender_id: $sender_id, timestamp: $timestamp, type: $type, content: $content, voice_file_id: $voice_file_id, document_file_id: $document_file_id, photo_file_id: $photo_file_id, read: $read}' \
     >> "$INBOX_FILE"
 
 done < <(printf '%s' "$RESPONSE" | jq -c '.result[]')

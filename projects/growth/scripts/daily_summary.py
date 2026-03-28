@@ -20,8 +20,15 @@ import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import ssl
 from urllib import request, parse
 from urllib.error import HTTPError
+
+try:
+    import certifi
+    _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    _SSL_CTX = ssl.create_default_context()
 
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent
@@ -59,7 +66,7 @@ def query_twilio_inbound(account_sid, api_key_sid, api_key_secret, report_date: 
     req.add_header("Authorization", f"Basic {auth}")
 
     try:
-        with request.urlopen(req, timeout=20) as resp:
+        with request.urlopen(req, timeout=20, context=_SSL_CTX) as resp:
             data = json.loads(resp.read())
             return data.get("messages", [])
     except HTTPError as e:
@@ -144,7 +151,7 @@ def send_telegram(text: str, bot_token: str, chat_id: str) -> bool:
     req = request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
     try:
-        with request.urlopen(req, timeout=15) as resp:
+        with request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
             result = json.loads(resp.read())
             return result.get("ok", False)
     except HTTPError as e:

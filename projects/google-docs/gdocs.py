@@ -22,6 +22,18 @@ import urllib.error
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+
+# Load .env from project root
+_env_path = os.path.join(PROJECT_ROOT, ".env")
+if os.path.isfile(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 OAUTH_TOKEN_PATH = os.path.join(SCRIPT_DIR, "data", "oauth_token.json")
 FOLDER_ID = "1pXbU19XxvZfq1QbY3bvBZtOiQ7J8G36C"
 

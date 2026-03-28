@@ -5,9 +5,8 @@
 
 set -euo pipefail
 
-REPO_ROOT="$HOME"
-PROJECT_DIR="Desktop/Projects/paperclip"
-LOG_FILE="$REPO_ROOT/$PROJECT_DIR/projects/ops/scripts/backup.log"
+REPO_ROOT="$HOME/Desktop/Projects/paperclip"
+LOG_FILE="$REPO_ROOT/projects/ops/scripts/backup.log"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
 
@@ -16,8 +15,8 @@ cd "$REPO_ROOT"
 # Pull latest to avoid non-fast-forward rejections
 git pull --rebase origin main 2>/dev/null || log "Pull failed, continuing with local commit."
 
-# Stage all files under the paperclip project directory
-git add "$PROJECT_DIR/" 2>/dev/null || true
+# Stage all tracked and new files
+git add -A 2>/dev/null || true
 
 # Check if there are staged changes
 if git diff --cached --quiet; then

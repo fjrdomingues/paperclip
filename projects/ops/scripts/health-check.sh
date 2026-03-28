@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Health check for all Paperclip LaunchAgents, production server, and data freshness.
+# Outputs JSON summary to stdout and appends to health.log.
+# Alerts Chief via Telegram on any failure.
+set -uo pipefail
+
+BASE_DIR="/Users/fabiodomingues/Desktop/Projects/paperclip"
+SEND_SH="$BASE_DIR/projects/telegram/send.sh"
+LOG_FILE="$BASE_DIR/projects/ops/scripts/health.log"
+STALE_THRESHOLD_MIN=60
+SERVER="root@64.226.74.167"
+
+TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+HEALTHY=true
+ALERTS=""
+
+add_alert() {
+    if [ -n "$ALERTS" ]; then ALERTS="$ALERTS|$1"; else ALERTS="$1"; fi
+}
+
+# --- A. LaunchAgent Health ---
+LA_JSON="{"
+first=true
+while IFS=$'\t' read -r pid exit_code label; do
+    case "$label" in com.paperclip.*) ;; *) continue ;; esac
+    ok=true
+    exit_val="$exit_code"
+    pid_val="$pid"
+    [ "$exit_code" = "-" ] && exit_val="null"
+    [ "$pid" = "-" ] && pid_val="null"
+    if [ "$exit_code" != "0" ] && [ "$exit_code" != "-" ]; then
+        # KeepAlive services may show a stale exit code but still be running
+        if [ "$pid" != "-" ] && [ -n "$pid" ]; then
+            ok=true  # Running with PID — previous crash was recovered
+        else
+            ok=false
+            HEALTHY=false
+            add_alert "LaunchAgent $label exit=$exit_code"
+        fi
+    fi
+    $first || LA_JSON+=","
+    LA_JSON+="\"$label\":{\"exit\":$exit_val,\"pid\":$pid_val,\"ok\":$ok}"
+    first=false
+done < <(launchctl list 2>/dev/null | grep com.paperclip)
+LA_JSON+="}"
+
+# --- B. Production Server Health ---
+SSH_OK=false
+CONTAINER_STATUS="unknown"
+SSH_OUT=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$SERVER" \
+    "docker ps --format '{{.Names}} {{.Status}}'" 2>/dev/null) || true
+
+if echo "$SSH_OUT" | grep -q "remodelai-app"; then
+    SSH_OK=true
+    CONTAINER_STATUS="running"
+elif [ -n "$SSH_OUT" ]; then
+    SSH_OK=true
+    CONTAINER_STATUS="not_running"
+    HEALTHY=false
+    add_alert "Server: remodelai-app container not running"
+else
+    # Try basic SSH connectivity
+    if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$SERVER" "echo ok" 2>/dev/null | grep -q "ok"; then
+        SSH_OK=true
+        CONTAINER_STATUS="not_running"
+        HEALTHY=false
+        add_alert "Server: remodelai-app container not running"
+    else
+        SSH_OK=false
+        CONTAINER_STATUS="ssh_failed"
+        HEALTHY=false
+        add_alert "Server: SSH connection failed"
+    fi
+fi
+
+SERVER_JSON="{\"ssh\":$SSH_OK,\"containers\":{\"remodelai-app\":\"$CONTAINER_STATUS\"}}"
+
+# --- C. Data Freshness ---
+FRESH_JSON="{"
+NOW_EPOCH=$(date +%s)
+fresh_first=true
+
+check_freshness() {
+    local name="$1"
+    local filepath="$2"
+    $fresh_first || FRESH_JSON+=","
+    fresh_first=false
+    if [ ! -f "$filepath" ]; then
+        FRESH_JSON+="\"$name\":{\"age_min\":null,\"ok\":false,\"error\":\"file_not_found\"}"
+        HEALTHY=false
+        add_alert "Data: $name file not found"
+        return
+    fi
+    local mod_epoch
+    mod_epoch=$(stat -f %m "$filepath" 2>/dev/null)
+    local age_sec=$(( NOW_EPOCH - mod_epoch ))
+    local age_min=$(( age_sec / 60 ))
+    local ok=true
+    if [ "$age_min" -gt "$STALE_THRESHOLD_MIN" ]; then
+        ok=false
+        HEALTHY=false
+        add_alert "Data: $name stale (${age_min}m)"
+    fi
+    FRESH_JSON+="\"$name\":{\"age_min\":$age_min,\"ok\":$ok}"
+}
+
+# Use state.json for telegram_poll — it's updated every poll cycle regardless of new messages.
+# poll.log only updates when there ARE new messages, causing false stale alerts.
+check_freshness "telegram_poll" "$BASE_DIR/projects/telegram/data/state.json"
+check_freshness "whatsapp_poll" "$BASE_DIR/projects/whatsapp/data/poll.log"
+check_freshness "whatsapp_sync" "$BASE_DIR/projects/whatsapp/data/sync.log"
+FRESH_JSON+="}"
+
+# Build alerts JSON array
+ALERTS_JSON="["
+if [ -n "$ALERTS" ]; then
+    afirst=true
+    IFS='|' read -ra ALERT_ARR <<< "$ALERTS"
+    for alert in "${ALERT_ARR[@]}"; do
+        $afirst || ALERTS_JSON+=","
+        ALERTS_JSON+="\"$(echo "$alert" | sed 's/"/\\"/g')\""
+        afirst=false
+    done
+fi
+ALERTS_JSON+="]"
+
+# --- Build Final JSON ---
+RESULT="{\"timestamp\":\"$TIMESTAMP\",\"healthy\":$HEALTHY,\"launchagents\":$LA_JSON,\"server\":$SERVER_JSON,\"data_freshness\":$FRESH_JSON,\"alerts\":$ALERTS_JSON}"
+
+# Pretty print to stdout
+echo "$RESULT" | python3 -m json.tool 2>/dev/null || echo "$RESULT"
+
+# Append to log
+echo "[$TIMESTAMP] $RESULT" >> "$LOG_FILE"
+
+# --- Alert on failure ---
+# NOTE: Do NOT send Telegram messages from HealthBot. Only Chief sends to Fábio.
+# Alerts are logged to health.log and stdout for the SRE agent to pick up via Paperclip.
+
+exit 0

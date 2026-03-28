@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.paperclip.whatsapp-sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>
+SERVER="root@64.226.74.167"
+REMOTE_BASE="/root/apps/whatsapp-viewer/sync-data"
+LOCAL_BASE="/Users/fabiodomingues/Desktop/Projects/paperclip"
+/usr/bin/rsync -az --timeout=30 "$LOCAL_BASE/projects/whatsapp/data/sent_log.csv" "$LOCAL_BASE/projects/whatsapp/data/inbox.jsonl" "$SERVER:$REMOTE_BASE/whatsapp/" &amp;&amp; /usr/bin/rsync -az --timeout=30 "$LOCAL_BASE/projects/growth/data/leads.csv" "$SERVER:$REMOTE_BASE/growth/" &amp;&amp; echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) sync complete"
+        </string>
+    </array>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/whatsapp-sync.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/whatsapp-sync.err</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin</string>
+        <key>HOME</key>
+        <string>/Users/fabiodomingues</string>
+    </dict>
+</dict>
+</plist>
