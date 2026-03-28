@@ -24,8 +24,10 @@
         <integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/fabiodomingues/Desktop/Projects/paperclip/projects/ops/scripts/backup.log</string>
+    <string>/Users/fabiodomingues/.paperclip/logs/daily-backup-stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/fabiodomingues/Desktop/Projects/paperclip/projects/ops/scripts/backup.log</string>
+    <string>/Users/fabiodomingues/.paperclip/logs/daily-backup-stderr.log</string>
+    <key>RunAtLoad</key>
+    <true/>
 </dict>
 </plist>
