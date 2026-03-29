@@ -1,10 +1,10 @@
 #!/bin/bash
-# verify-pipeline.sh — End-to-end verification of the Telegram → Chief wake pipeline.
+# verify-pipeline.sh — Verification for the Telegram → Chief wake pipeline.
 # Run on-demand to confirm the pipeline works after changes.
 #
 # Usage:
 #   ./verify-pipeline.sh              # checks only (safe, no side effects)
-#   ./verify-pipeline.sh --test-wake  # also fires a real /wake to confirm end-to-end
+#   ./verify-pipeline.sh --test-wake  # also fires a real direct heartbeat wake
 #
 # Exit code: 0 = all checks passed, 1 = one or more failures.
 
@@ -22,6 +22,7 @@ PAPERCLIP_API_BASE="${PAPERCLIP_API_BASE:-http://localhost:3100}"
 CEO_AGENT_ID="e2b797d0-8f0c-4bcf-adf9-99fd095ea14b"
 CEO_ALERT_ISSUE_ID="0d1502be-da96-4db1-bfe4-de78c19e473a"
 OWNER_CHAT_ID="528866003"
+POLLER_SCRIPT="$SCRIPT_DIR/cron-poll.sh"
 
 TEST_WAKE=0
 if [[ "${1:-}" == "--test-wake" ]]; then
@@ -139,25 +140,54 @@ else
 fi
 
 # ------------------------------------------------------------------
-# 6. CEO alert issue accessible (WIN-28)
+# 6. Direct heartbeat path
 # ------------------------------------------------------------------
-section "CEO Alert Issue"
+section "Direct heartbeat wake"
+
+CLI_PATH="$(command -v paperclipai 2>/dev/null || true)"
+if [ -n "$CLI_PATH" ]; then
+  pass "paperclipai found at $CLI_PATH"
+else
+  fail "paperclipai CLI not found in PATH"
+fi
+
+HELP_OUTPUT="$(paperclipai heartbeat run --help 2>/dev/null || true)"
+if printf '%s' "$HELP_OUTPUT" | grep -q -- '--agent-id' \
+  && printf '%s' "$HELP_OUTPUT" | grep -q -- '--api-base' \
+  && printf '%s' "$HELP_OUTPUT" | grep -q -- '--api-key' \
+  && printf '%s' "$HELP_OUTPUT" | grep -q -- '--source' \
+  && printf '%s' "$HELP_OUTPUT" | grep -q -- '--trigger'; then
+  pass "paperclipai heartbeat run exposes the expected direct-wake flags"
+else
+  fail "paperclipai heartbeat run help is missing expected direct-wake flags"
+fi
+
+if grep -q 'paperclipai heartbeat run' "$POLLER_SCRIPT"; then
+  pass "cron-poll.sh is wired to the direct heartbeat CLI"
+else
+  fail "cron-poll.sh does not reference paperclipai heartbeat run"
+fi
+
+# ------------------------------------------------------------------
+# 7. Fallback route
+# ------------------------------------------------------------------
+section "Fallback wake path"
 
 if [ -n "${PAPERCLIP_CEO_API_KEY:-}" ]; then
   HTTP="$(curl -fsS -o /dev/null -w "%{http_code}" --max-time 10 \
     -H "Authorization: Bearer ${PAPERCLIP_CEO_API_KEY}" \
     "${PAPERCLIP_API_BASE}/api/issues/${CEO_ALERT_ISSUE_ID}" 2>/dev/null)" || HTTP="000"
   if [ "$HTTP" = "200" ]; then
-    pass "CEO alert issue accessible (WIN-28, id=$CEO_ALERT_ISSUE_ID)"
+    pass "fallback CEO alert issue accessible (WIN-28, id=$CEO_ALERT_ISSUE_ID)"
   else
-    fail "CEO alert issue returned HTTP $HTTP — wake target unreachable"
+    fail "fallback CEO alert issue returned HTTP $HTTP — degraded backup unavailable"
   fi
 else
-  fail "PAPERCLIP_CEO_API_KEY not set — skipping CEO issue check"
+  fail "PAPERCLIP_CEO_API_KEY not set — skipping fallback issue check"
 fi
 
 # ------------------------------------------------------------------
-# 7. State file / data directory
+# 8. State file / data directory
 # ------------------------------------------------------------------
 section "State"
 
@@ -186,26 +216,37 @@ else
   warn "inbox.jsonl not found (no messages received yet)"
 fi
 
+if [ -f "$DATA_DIR/heartbeat.log" ]; then
+  pass "heartbeat.log exists"
+else
+  warn "heartbeat.log not found yet (no direct wake has been launched from this machine)"
+fi
+
 # ------------------------------------------------------------------
-# 8. Optional live wake test
+# 9. Optional live wake test
 # ------------------------------------------------------------------
 section "Auto-wake trigger"
 
 if [ "$TEST_WAKE" -eq 1 ]; then
-  echo "  Firing live wake test — will post @Chief comment on WIN-28..."
-  BODY='{"body":"@Chief verify-pipeline.sh: live wake test"}'
-  HTTP="$(curl -fsS -o /dev/null -w "%{http_code}" --max-time 10 \
-    -H "Authorization: Bearer ${PAPERCLIP_CEO_API_KEY}" \
-    -H "Content-Type: application/json" \
-    -d "$BODY" \
-    "${PAPERCLIP_API_BASE}/api/issues/${CEO_ALERT_ISSUE_ID}/comments" 2>/dev/null)" || HTTP="000"
-  if [ "$HTTP" = "200" ] || [ "$HTTP" = "201" ]; then
-    pass "Wake comment posted successfully (HTTP $HTTP) — check CEO heartbeat log to confirm wake"
+  warn "Live wake test can cause Chief to process unread Telegram messages; clear the inbox first if you want a no-reply test."
+  if [ -n "${PAPERCLIP_CEO_API_KEY:-}" ] && [ -n "$CLI_PATH" ]; then
+    if paperclipai heartbeat run \
+      --agent-id "$CEO_AGENT_ID" \
+      --api-base "$PAPERCLIP_API_BASE" \
+      --api-key "$PAPERCLIP_CEO_API_KEY" \
+      --source automation \
+      --trigger callback \
+      --timeout-ms 15000 \
+      --json >/dev/null 2>&1; then
+      pass "Direct wake command executed successfully — inspect Chief activity/logs for the resulting heartbeat"
+    else
+      fail "Direct wake command failed"
+    fi
   else
-    fail "Failed to post wake comment (HTTP $HTTP)"
+    fail "Cannot run live wake test without paperclipai and PAPERCLIP_CEO_API_KEY"
   fi
 else
-  warn "Skipped — re-run with --test-wake to fire a real wake and verify end-to-end"
+  warn "Skipped — re-run with --test-wake to fire a real direct wake and verify end-to-end"
 fi
 
 # ------------------------------------------------------------------

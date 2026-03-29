@@ -62,14 +62,18 @@ Direct access to @winnerdino_bot for messaging Fábio (chat_id 528866003, @WildC
 
 - **Token**: env file at `projects/telegram/.env` (contains `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`)
 - **Inbox**: `projects/telegram/data/inbox.jsonl` — append-only JSONL, populated every 60s
-- **State**: `projects/telegram/data/state.json` — polling offset and auto-wake cooldown tracker
+- **State**: `projects/telegram/data/state.json` — polling offset and short auto-wake dedupe tracker
+- **Heartbeat log**: `projects/telegram/data/heartbeat.log` — direct CEO wake launches and CLI output
 - **Poller**: launchd agent `com.paperclip.telegram-poll` runs `projects/telegram/cron-poll.sh` every 60s (survives macOS sleep, catches up on wake)
+- **Wake path**: normal flow invokes `Chief` directly with `paperclipai heartbeat run`; issue [WIN-28](/WIN/issues/WIN-28) is fallback-only if the direct invoke fails
 
 Always load the env before any Telegram API call:
 
 ```bash
 source /Users/fabiodomingues/Desktop/Projects/paperclip/projects/telegram/.env
 ```
+
+If you are debugging the wake path itself, also confirm `PAPERCLIP_CEO_API_KEY` is present in that env file; the poller uses it for both direct `paperclipai heartbeat run` invocations and the degraded WIN-28 fallback.
 
 ### Check messages
 

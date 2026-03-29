@@ -6,20 +6,28 @@ Run this checklist on every heartbeat. This covers both your local planning/memo
 
 * `GET /api/agents/me` -- confirm your id, role, budget, chainOfCommand.
 * Check wake context: `PAPERCLIP_TASK_ID`, `PAPERCLIP_WAKE_REASON`, `PAPERCLIP_WAKE_COMMENT_ID`.
+* Direct Telegram wakes may arrive with no issue/comment context at all. Treat an on-demand/callback-style wake with unread Telegram rows as valid Telegram work, not as an idle heartbeat.
 
 ## 2. Telegram Wake Triage
 
-If the wake context indicates Telegram or a new message from Fábio (for example wake reason/context mentions Telegram, `New Telegram message(s) from Fábio`, `/wake`, or the trigger comment is the CEO alert inbox), process Telegram before normal assignment handling.
+If the wake context indicates Telegram or a new message from Fábio, process Telegram before normal assignment handling. This includes direct poller wakes where there is no issue/comment context but unread Telegram rows exist.
+
+Examples that should enter Telegram triage first:
+
+* wake reason/context mentions Telegram, `New Telegram message(s) from Fábio`, or `/wake`
+* the trigger comment is the CEO alert inbox fallback
+* there is no task/comment context, but unread Telegram inbox rows exist
 
 1. Read unread inbox rows from `projects/telegram/data/inbox.jsonl`.
 2. Treat inbound rows as the source of truth. Outbound rows with `direction: "outbound"` are only conversation context.
-3. Use the shared Telegram tooling in `/Users/fabiodomingues/Desktop/Projects/paperclip/TOOLS.md` to process the unread messages:
+3. If present, skim `projects/telegram/data/heartbeat.log` for the most recent direct wake attempt so you can distinguish a normal direct callback from a degraded fallback.
+4. Use the shared Telegram tooling in `/Users/fabiodomingues/Desktop/Projects/paperclip/TOOLS.md` to process the unread messages:
    * `text` -- read directly from inbox content.
    * `voice` -- transcribe using the voice transcription steps.
    * `photo` -- inspect using the image-reading steps.
    * `document` -- download and inspect using the document helper.
-4. Do whatever the message requires before normal assignment handling: reply to Fábio if needed, create/delegate tasks, or note a follow-up for later work.
-5. After the message is handled, mark the corresponding inbox rows as read so the same Telegram messages do not stay unread forever.
+5. Do whatever the message requires before normal assignment handling: reply to Fábio if needed, create/delegate tasks, or note a follow-up for later work.
+6. After the message is handled, mark the corresponding inbox rows as read so the same Telegram messages do not stay unread forever.
 
 Suggested commands:
 
