@@ -17,7 +17,7 @@ STATE_FILE="$DATA_DIR/state.json"
 
 LAUNCHD_LABEL="com.paperclip.telegram-poll"
 LAUNCHD_PATH="$HOME/Library/LaunchAgents/com.paperclip.telegram-poll.plist"
-LAUNCHD_PATH_SETTING="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+LAUNCHD_PATH_SETTING="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 PAPERCLIP_API_BASE="${PAPERCLIP_API_BASE:-http://localhost:3100}"
 CEO_AGENT_ID="e2b797d0-8f0c-4bcf-adf9-99fd095ea14b"
 CEO_ALERT_ISSUE_ID="0d1502be-da96-4db1-bfe4-de78c19e473a"
@@ -36,6 +36,71 @@ pass() { printf "  \033[32m✓\033[0m %s\n" "$1"; PASS=$((PASS+1)); }
 fail() { printf "  \033[31m✗\033[0m %s\n" "$1"; FAIL=$((FAIL+1)); }
 warn() { printf "  \033[33m~\033[0m %s\n" "$1"; }
 section() { printf "\n\033[1m=== %s ===\033[0m\n" "$1"; }
+
+prepend_path_dir() {
+  local dir="$1"
+
+  [ -n "$dir" ] || return 0
+  [ -d "$dir" ] || return 0
+
+  case ":$PATH:" in
+    *":$dir:"*) ;;
+    *) PATH="$dir:$PATH" ;;
+  esac
+}
+
+resolve_default_nvm_bin() {
+  local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  local default_alias
+  local version
+  local bin_dir
+
+  [ -f "$nvm_dir/alias/default" ] || return 1
+
+  default_alias="$(tr -d '[:space:]' < "$nvm_dir/alias/default")"
+  [ -n "$default_alias" ] || return 1
+
+  version="${default_alias#v}"
+  bin_dir="$nvm_dir/versions/node/v${version}/bin"
+
+  [ -x "$bin_dir/node" ] || return 1
+  printf '%s\n' "$bin_dir"
+}
+
+ensure_launchd_node_path() {
+  local nvm_bin
+
+  nvm_bin="$(resolve_default_nvm_bin || true)"
+  if [ -n "$nvm_bin" ]; then
+    prepend_path_dir "$nvm_bin"
+  fi
+
+  export PATH
+}
+
+resolve_direct_wake_cli() {
+  ensure_launchd_node_path
+
+  if command -v paperclipai >/dev/null 2>&1; then
+    printf 'paperclipai\t%s\n' "$(command -v paperclipai)"
+    return 0
+  fi
+
+  if command -v npx >/dev/null 2>&1; then
+    printf 'npx\t%s\n' "$(command -v npx)"
+    return 0
+  fi
+
+  return 1
+}
+
+run_direct_wake_help() {
+  if [ "$DIRECT_WAKE_CLI_KIND" = "paperclipai" ]; then
+    paperclipai heartbeat run --help 2>/dev/null
+  else
+    npx --yes paperclipai heartbeat run --help 2>/dev/null
+  fi
+}
 
 # ------------------------------------------------------------------
 # 1. launchd
@@ -126,12 +191,27 @@ fi
 # ------------------------------------------------------------------
 section "Paperclip API"
 
+KEY_AGENT_ID=""
+KEY_AGENT_NAME=""
+KEY_AGENT_ROLE=""
+
 if [ -n "${PAPERCLIP_CEO_API_KEY:-}" ]; then
   HTTP="$(curl -fsS -o /dev/null -w "%{http_code}" --max-time 10 \
     -H "Authorization: Bearer ${PAPERCLIP_CEO_API_KEY}" \
     "${PAPERCLIP_API_BASE}/api/agents/me" 2>/dev/null)" || HTTP="000"
   if [ "$HTTP" = "200" ]; then
     pass "Paperclip API reachable at $PAPERCLIP_API_BASE (HTTP $HTTP)"
+    KEY_AGENT_INFO="$(curl -fsS --max-time 10 \
+      -H "Authorization: Bearer ${PAPERCLIP_CEO_API_KEY}" \
+      "${PAPERCLIP_API_BASE}/api/agents/me" 2>/dev/null || true)"
+    KEY_AGENT_ID="$(printf '%s' "$KEY_AGENT_INFO" | jq -r '.id // empty' 2>/dev/null || true)"
+    KEY_AGENT_NAME="$(printf '%s' "$KEY_AGENT_INFO" | jq -r '.name // empty' 2>/dev/null || true)"
+    KEY_AGENT_ROLE="$(printf '%s' "$KEY_AGENT_INFO" | jq -r '.role // empty' 2>/dev/null || true)"
+    if [ "$KEY_AGENT_ID" = "$CEO_AGENT_ID" ]; then
+      pass "PAPERCLIP_CEO_API_KEY authenticates as Chief (${KEY_AGENT_ROLE:-unknown role})"
+    else
+      fail "PAPERCLIP_CEO_API_KEY authenticates as ${KEY_AGENT_NAME:-unknown} (${KEY_AGENT_ROLE:-unknown role}, ${KEY_AGENT_ID:-unknown id}), not Chief ($CEO_AGENT_ID)"
+    fi
   else
     fail "Paperclip API returned HTTP $HTTP at $PAPERCLIP_API_BASE"
   fi
@@ -144,22 +224,48 @@ fi
 # ------------------------------------------------------------------
 section "Direct heartbeat wake"
 
-CLI_PATH="$(command -v paperclipai 2>/dev/null || true)"
-if [ -n "$CLI_PATH" ]; then
-  pass "paperclipai found at $CLI_PATH"
+ORIGINAL_PATH="$PATH"
+PATH="$LAUNCHD_PATH_SETTING"
+DIRECT_WAKE_INFO="$(resolve_direct_wake_cli 2>/dev/null || true)"
+PATH="$ORIGINAL_PATH"
+
+DIRECT_WAKE_CLI_KIND="${DIRECT_WAKE_INFO%%	*}"
+if [ "$DIRECT_WAKE_CLI_KIND" != "$DIRECT_WAKE_INFO" ]; then
+  DIRECT_WAKE_CLI_PATH="${DIRECT_WAKE_INFO#*	}"
 else
-  fail "paperclipai CLI not found in PATH"
+  DIRECT_WAKE_CLI_KIND=""
+  DIRECT_WAKE_CLI_PATH=""
 fi
 
-HELP_OUTPUT="$(paperclipai heartbeat run --help 2>/dev/null || true)"
+if [ "$DIRECT_WAKE_CLI_KIND" = "paperclipai" ]; then
+  pass "launchd-equivalent PATH resolves paperclipai at $DIRECT_WAKE_CLI_PATH"
+elif [ "$DIRECT_WAKE_CLI_KIND" = "npx" ]; then
+  pass "launchd-equivalent PATH resolves npx at $DIRECT_WAKE_CLI_PATH for 'npx --yes paperclipai'"
+else
+  fail "launchd-equivalent PATH could not resolve paperclipai or npx"
+fi
+
+if [ -n "$DIRECT_WAKE_CLI_KIND" ]; then
+  PATH="$LAUNCHD_PATH_SETTING"
+  ensure_launchd_node_path
+  HELP_OUTPUT="$(run_direct_wake_help || true)"
+  PATH="$ORIGINAL_PATH"
+else
+  HELP_OUTPUT=""
+fi
+
 if printf '%s' "$HELP_OUTPUT" | grep -q -- '--agent-id' \
   && printf '%s' "$HELP_OUTPUT" | grep -q -- '--api-base' \
   && printf '%s' "$HELP_OUTPUT" | grep -q -- '--api-key' \
   && printf '%s' "$HELP_OUTPUT" | grep -q -- '--source' \
   && printf '%s' "$HELP_OUTPUT" | grep -q -- '--trigger'; then
-  pass "paperclipai heartbeat run exposes the expected direct-wake flags"
+  if [ "$DIRECT_WAKE_CLI_KIND" = "npx" ]; then
+    pass "launchd-equivalent 'npx --yes paperclipai heartbeat run' exposes the expected direct-wake flags"
+  else
+    pass "launchd-equivalent 'paperclipai heartbeat run' exposes the expected direct-wake flags"
+  fi
 else
-  fail "paperclipai heartbeat run help is missing expected direct-wake flags"
+  fail "launchd-equivalent direct-wake command help is missing expected direct-wake flags"
 fi
 
 if grep -q 'paperclipai heartbeat run' "$POLLER_SCRIPT"; then
@@ -229,21 +335,39 @@ section "Auto-wake trigger"
 
 if [ "$TEST_WAKE" -eq 1 ]; then
   warn "Live wake test can cause Chief to process unread Telegram messages; clear the inbox first if you want a no-reply test."
-  if [ -n "${PAPERCLIP_CEO_API_KEY:-}" ] && [ -n "$CLI_PATH" ]; then
-    if paperclipai heartbeat run \
-      --agent-id "$CEO_AGENT_ID" \
-      --api-base "$PAPERCLIP_API_BASE" \
-      --api-key "$PAPERCLIP_CEO_API_KEY" \
-      --source automation \
-      --trigger callback \
-      --timeout-ms 15000 \
-      --json >/dev/null 2>&1; then
-      pass "Direct wake command executed successfully — inspect Chief activity/logs for the resulting heartbeat"
+  if [ -n "${PAPERCLIP_CEO_API_KEY:-}" ] && [ -n "$DIRECT_WAKE_CLI_KIND" ]; then
+    PATH="$LAUNCHD_PATH_SETTING"
+    ensure_launchd_node_path
+    if [ "$DIRECT_WAKE_CLI_KIND" = "paperclipai" ]; then
+      if paperclipai heartbeat run \
+        --agent-id "$CEO_AGENT_ID" \
+        --api-base "$PAPERCLIP_API_BASE" \
+        --api-key "$PAPERCLIP_CEO_API_KEY" \
+        --source automation \
+        --trigger callback \
+        --timeout-ms 15000 \
+        --json >/dev/null 2>&1; then
+        pass "Direct wake command executed successfully — inspect Chief activity/logs for the resulting heartbeat"
+      else
+        fail "Direct wake command failed"
+      fi
     else
-      fail "Direct wake command failed"
+      if npx --yes paperclipai heartbeat run \
+        --agent-id "$CEO_AGENT_ID" \
+        --api-base "$PAPERCLIP_API_BASE" \
+        --api-key "$PAPERCLIP_CEO_API_KEY" \
+        --source automation \
+        --trigger callback \
+        --timeout-ms 15000 \
+        --json >/dev/null 2>&1; then
+        pass "Direct wake command executed successfully — inspect Chief activity/logs for the resulting heartbeat"
+      else
+        fail "Direct wake command failed"
+      fi
     fi
+    PATH="$ORIGINAL_PATH"
   else
-    fail "Cannot run live wake test without paperclipai and PAPERCLIP_CEO_API_KEY"
+    fail "Cannot run live wake test without a launchd-resolved direct-wake command and PAPERCLIP_CEO_API_KEY"
   fi
 else
   warn "Skipped — re-run with --test-wake to fire a real direct wake and verify end-to-end"

@@ -1,6 +1,8 @@
 #!/bin/bash
-# Ensure Homebrew binaries (jq, etc.) are on PATH when run from launchd/osascript
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+# Ensure Homebrew binaries (jq, etc.) are on PATH when run from launchd/osascript.
+# The direct CEO wake path also needs the default nvm bin so launchd can find npx.
+LAUNCHD_BASE_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="${LAUNCHD_BASE_PATH}:${PATH:-}"
 set -euo pipefail
 
 # Telegram Cron Poller
@@ -32,6 +34,47 @@ INBOX_FILE="$DATA_DIR/inbox.jsonl"
 LOG_FILE="$DATA_DIR/poll.log"
 HEARTBEAT_LOG_FILE="$DATA_DIR/heartbeat.log"
 ENV_FILE="$SCRIPT_DIR/.env"
+
+prepend_path_dir() {
+  local dir="$1"
+
+  [ -n "$dir" ] || return 0
+  [ -d "$dir" ] || return 0
+
+  case ":$PATH:" in
+    *":$dir:"*) ;;
+    *) PATH="$dir:$PATH" ;;
+  esac
+}
+
+resolve_default_nvm_bin() {
+  local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  local default_alias
+  local version
+  local bin_dir
+
+  [ -f "$nvm_dir/alias/default" ] || return 1
+
+  default_alias="$(tr -d '[:space:]' < "$nvm_dir/alias/default")"
+  [ -n "$default_alias" ] || return 1
+
+  version="${default_alias#v}"
+  bin_dir="$nvm_dir/versions/node/v${version}/bin"
+
+  [ -x "$bin_dir/node" ] || return 1
+  printf '%s\n' "$bin_dir"
+}
+
+ensure_launchd_node_path() {
+  local nvm_bin
+
+  nvm_bin="$(resolve_default_nvm_bin || true)"
+  if [ -n "$nvm_bin" ]; then
+    prepend_path_dir "$nvm_bin"
+  fi
+
+  export PATH
+}
 
 # Load env from .env file if present
 if [ -f "$ENV_FILE" ]; then
@@ -172,27 +215,48 @@ fallback_issue_wake() {
 
 invoke_ceo_heartbeat() {
   local context="$1"
-  local -a cmd=(
-    paperclipai heartbeat run
-    --agent-id "$CEO_AGENT_ID"
-    --api-base "$PAPERCLIP_API_BASE"
-    --api-key "$PAPERCLIP_CEO_API_KEY"
-    --source automation
-    --trigger callback
-    --timeout-ms "$CEO_HEARTBEAT_TIMEOUT_MS"
-    --json
-  )
+  local cli_mode
+  local cli_path
+  local -a cmd
   local pid
   local status
 
-  if ! command -v paperclipai >/dev/null 2>&1; then
-    echo "$(date -Iseconds) ERROR: paperclipai CLI not found; cannot invoke CEO directly" >> "$LOG_FILE"
+  ensure_launchd_node_path
+
+  if command -v paperclipai >/dev/null 2>&1; then
+    cli_mode="paperclipai"
+    cli_path="$(command -v paperclipai)"
+    cmd=(
+      paperclipai heartbeat run
+      --agent-id "$CEO_AGENT_ID"
+      --api-base "$PAPERCLIP_API_BASE"
+      --api-key "$PAPERCLIP_CEO_API_KEY"
+      --source automation
+      --trigger callback
+      --timeout-ms "$CEO_HEARTBEAT_TIMEOUT_MS"
+      --json
+    )
+  elif command -v npx >/dev/null 2>&1; then
+    cli_mode="npx"
+    cli_path="$(command -v npx)"
+    cmd=(
+      npx --yes paperclipai heartbeat run
+      --agent-id "$CEO_AGENT_ID"
+      --api-base "$PAPERCLIP_API_BASE"
+      --api-key "$PAPERCLIP_CEO_API_KEY"
+      --source automation
+      --trigger callback
+      --timeout-ms "$CEO_HEARTBEAT_TIMEOUT_MS"
+      --json
+    )
+  else
+    echo "$(date -Iseconds) ERROR: paperclipai CLI not found in launchd PATH and npx is unavailable; cannot invoke CEO directly" >> "$LOG_FILE"
     fallback_issue_wake "$context"
     return 1
   fi
 
   {
-    printf '%s INFO: Starting CEO heartbeat:' "$(date -Iseconds)"
+    printf '%s INFO: Starting CEO heartbeat (%s via %s):' "$(date -Iseconds)" "$cli_mode" "$cli_path"
     printf ' %q' "${cmd[@]}"
     if [ -n "$context" ]; then
       printf ' # context=%s' "$context"
