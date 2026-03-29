@@ -2,6 +2,32 @@
 
 These tools are available to all Paperclip agents. This is the canonical reference — do not duplicate tool docs in agent-specific files. Read the relevant section before using a tool.
 
+## Prerequisites / Agent Tooling
+
+These CLI tools must be installed on the machine running agent heartbeats. Install once; they persist across sessions.
+
+### qmd
+
+`qmd` is used by the `para-memory-files` skill for semantic recall queries. Install globally via npm:
+
+```bash
+npm install -g @tobilu/qmd
+```
+
+**Verified working on:** macOS with nvm-managed Node.js v25+. After install, `qmd` lands in the active nvm Node bin directory (e.g. `~/.nvm/versions/node/v25.x.x/bin/`). Both interactive and non-interactive shells (zsh/bash) resolve it correctly because nvm is sourced from `~/.zshrc`.
+
+**Verify:**
+```bash
+which qmd        # → ~/.nvm/versions/node/vX.Y.Z/bin/qmd
+qmd --version    # → qmd 2.0.1 (bab86d5)
+```
+
+If `which qmd` fails in a non-interactive shell, ensure `~/.zshrc` sources nvm:
+```bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+```
+
 ## Telegram
 
 Direct access to @winnerdino_bot for messaging Fábio (chat_id 528866003, @WildCats99).
