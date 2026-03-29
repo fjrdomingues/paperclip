@@ -275,11 +275,15 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
         print(f"Daily cap reached ({sent_today}/{args.daily_cap}). Exiting.")
         sys.exit(0)
 
+    NON_PROSPECTABLE_STATUSES = {"cliente", "client", "customer", "do_not_contact"}
+
     # Find next unsent lead
     target_lead = None
     for lead in leads:
         phone = lead.get("phone", "").strip()
         if not phone:
+            continue
+        if lead.get("status", "").strip().lower() in NON_PROSPECTABLE_STATUSES:
             continue
         if not phone.startswith("+"):
             phone = "+" + phone.lstrip("0")
@@ -426,6 +430,8 @@ def main():
         print(f"Outside business hours. Next window opens at {next_open.strftime('%Y-%m-%d %H:%M %Z')}. Exiting.")
         sys.exit(0)
 
+    NON_PROSPECTABLE_STATUSES = {"cliente", "client", "customer", "do_not_contact"}
+
     for lead in leads:
         phone = lead.get("phone", "").strip()
         name = lead.get("name", "").strip()
@@ -433,6 +439,11 @@ def main():
 
         if not phone:
             print(f"  SKIP (no phone): {name}")
+            skipped_count += 1
+            continue
+
+        if lead.get("status", "").strip().lower() in NON_PROSPECTABLE_STATUSES:
+            print(f"  SKIP (client status): {name} {phone}")
             skipped_count += 1
             continue
 
