@@ -14,16 +14,42 @@ These CLI tools must be installed on the machine running agent heartbeats. Insta
 npm install -g @tobilu/qmd
 ```
 
-**Verified working on:** macOS with nvm-managed Node.js v25+. After install, `qmd` lands in the active nvm Node bin directory (e.g. `~/.nvm/versions/node/v25.x.x/bin/`). Both interactive and non-interactive shells (zsh/bash) resolve it correctly because nvm is sourced from `~/.zshrc`.
+**Verified working on:** macOS with nvm-managed Node.js. `qmd` lands in the active nvm Node version's bin directory (e.g. `~/.nvm/versions/node/v25.8.1/bin/`).
+
+**Supported shell conditions:**
+
+| Shell type | Works? | Why |
+|---|---|---|
+| Inherited shell (Claude Code / agent adapters) | ✅ | Inherits parent env; nvm already active |
+| Fresh interactive shell (`zsh -i`) | ✅ | `.zshrc` sources nvm; nvm default must be the version with qmd installed |
+| Fresh login shell (`zsh -l`) | ❌ | `.zshrc` is skipped; nvm never loads |
+
+**Requirements:**
+1. Install `qmd` under the nvm version you want as the default, then set it as the nvm default:
+   ```bash
+   nvm use 25.8.1
+   npm install -g @tobilu/qmd
+   nvm alias default 25.8.1
+   ```
+2. Confirm `~/.zshrc` sources nvm (standard nvm install adds this automatically).
+3. Login shells (`zsh -l`, `zsh --login`) are **not supported** without also adding nvm init to `~/.zprofile`.
 
 **Verify:**
 ```bash
+# Inherited / interactive shell
 which qmd        # → ~/.nvm/versions/node/vX.Y.Z/bin/qmd
 qmd --version    # → qmd 2.0.1 (bab86d5)
+
+# Confirm fresh interactive shell works
+env -i HOME="$HOME" /bin/zsh -ic 'which qmd; qmd --version'
+
+# Fresh login shell — expected to fail unless nvm is in ~/.zprofile
+env -i HOME="$HOME" /bin/zsh -lc 'which qmd'
 ```
 
-If `which qmd` fails in a non-interactive shell, ensure `~/.zshrc` sources nvm:
+**To enable login shell support** (optional — requires editing `~/.zprofile`):
 ```bash
+# Add to ~/.zprofile:
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 ```
