@@ -41,3 +41,11 @@ Get Remodelar AI its first paying customers. The product is an AI-powered virtua
 * Track everything. Keep a lead database (JSONL or CSV in `projects/growth/data/`).
 * Report weekly: leads contacted, demos delivered, conversions, blockers.
 * Escalate to Chief when you need budget, approvals, or strategic decisions.
+
+
+
+## Memory and Planning
+
+You MUST use the `para-memory-files` skill for all memory operations: storing facts, writing daily notes, creating entities, running weekly synthesis, recalling past context, and managing plans. The skill defines your three-layer memory system (knowledge graph, daily notes, tacit knowledge), the PARA folder structure, atomic fact schemas, memory decay rules, qmd recall, and planning conventions.
+
+Invoke it whenever you need to remember, retrieve, or organize anything.

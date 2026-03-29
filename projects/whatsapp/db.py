@@ -301,7 +301,9 @@ def get_pipeline_stats(db):
     total_replied = db.execute(
         """SELECT COUNT(DISTINCT im.phone) as cnt FROM inbound_messages im
            INNER JOIN outreach_messages om ON im.phone = om.phone
-           WHERE om.status = 'sent'"""
+           LEFT JOIN contact_stages cs ON im.phone = cs.phone
+           WHERE om.status = 'sent'
+             AND (cs.stage IS NULL OR cs.stage != 'auto_responder')"""
     ).fetchone()["cnt"]
 
     return {
