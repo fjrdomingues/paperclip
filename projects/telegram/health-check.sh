@@ -9,17 +9,18 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DATA_DIR="$SCRIPT_DIR/data"
-STATE_FILE="$DATA_DIR/state.json"
-HEALTH_STATE_FILE="$DATA_DIR/health-state.json"
-LOG_FILE="$DATA_DIR/health.log"
-ENV_FILE="$SCRIPT_DIR/.env"
+DATA_DIR="${TELEGRAM_HEALTH_DATA_DIR:-$SCRIPT_DIR/data}"
+STATE_FILE="${TELEGRAM_HEALTH_STATE_FILE:-$DATA_DIR/state.json}"
+HEALTH_STATE_FILE="${TELEGRAM_HEALTH_ALERT_STATE_FILE:-$DATA_DIR/health-state.json}"
+LOG_FILE="${TELEGRAM_HEALTH_LOG_FILE:-$DATA_DIR/health.log}"
+ENV_FILE="${TELEGRAM_HEALTH_ENV_FILE:-$SCRIPT_DIR/.env}"
 
 STALE_THRESHOLD_SEC=300   # alert when poller has not run for 5 minutes
 ALERT_COOLDOWN_SEC=600    # re-alert at most every 10 minutes
 OWNER_CHAT_ID="528866003"
 LOG_MAX_LINES=500
-LAUNCHD_LOG_DIR="$HOME/.paperclip/logs"
+LAUNCHD_LOG_DIR="${TELEGRAM_HEALTH_LAUNCHD_LOG_DIR:-$HOME/.paperclip/logs}"
+DRY_RUN="${TELEGRAM_ALERT_DRY_RUN:-0}"
 
 # Load .env
 if [ -f "$ENV_FILE" ]; then
@@ -67,8 +68,8 @@ if [ -z "$LAST_POLL" ]; then
   exit 0
 fi
 
-# Parse ISO 8601 timestamp to epoch (macOS BSD date)
-LAST_POLL_EPOCH="$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$LAST_POLL" "+%s" 2>/dev/null)" || {
+# macOS BSD date treats the parsed timestamp as local time unless -u is set.
+LAST_POLL_EPOCH="$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$LAST_POLL" "+%s" 2>/dev/null)" || {
   echo "$(date -Iseconds) ERROR: Could not parse last_poll timestamp: $LAST_POLL" >> "$LOG_FILE"
   exit 1
 }
@@ -112,16 +113,22 @@ Check launchd status:
 Recent poller log:
   tail ~/.paperclip/logs/telegram-poll-stdout.log"
 
-curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-  -d "chat_id=${OWNER_CHAT_ID}" \
-  --data-urlencode "text=${ALERT_MSG}" \
-  -o /dev/null || {
-    echo "$(date -Iseconds) ERROR: Failed to send Telegram alert" >> "$LOG_FILE"
-    exit 1
-  }
+if [ "$DRY_RUN" = "1" ]; then
+  echo "$(date -Iseconds) ALERT(dry-run): poller stale (${ELAPSED}s / ${ELAPSED_MIN}m) — Telegram alert suppressed" >> "$LOG_FILE"
+else
+  curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    -d "chat_id=${OWNER_CHAT_ID}" \
+    --data-urlencode "text=${ALERT_MSG}" \
+    -o /dev/null || {
+      echo "$(date -Iseconds) ERROR: Failed to send Telegram alert" >> "$LOG_FILE"
+      exit 1
+    }
+fi
 
 # Record alert time
 jq -n --argjson ts "$NOW" --arg last_poll "$LAST_POLL" \
   '{"last_alert": $ts, "last_stale_poll": $last_poll}' > "$HEALTH_STATE_FILE"
 
-echo "$(date -Iseconds) ALERT: poller stale (${ELAPSED}s / ${ELAPSED_MIN}m) — Telegram alert sent" >> "$LOG_FILE"
+if [ "$DRY_RUN" != "1" ]; then
+  echo "$(date -Iseconds) ALERT: poller stale (${ELAPSED}s / ${ELAPSED_MIN}m) — Telegram alert sent" >> "$LOG_FILE"
+fi
