@@ -47,6 +47,17 @@ env -i HOME="$HOME" /bin/zsh -ic 'which qmd; qmd --version'
 env -i HOME="$HOME" /bin/zsh -lc 'which qmd'
 ```
 
+**First-time workspace setup:**
+```bash
+# From the workspace you want QMD to index
+qmd collection add .
+qmd update
+qmd embed
+```
+
+`qmd index <path>` is not available in the current CLI. Use collections plus
+`update`/`embed` instead.
+
 **To enable login shell support** (optional — requires editing `~/.zprofile`):
 ```bash
 # Add to ~/.zprofile:
