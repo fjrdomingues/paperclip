@@ -8,6 +8,9 @@ BASE_DIR="/Users/fabiodomingues/Desktop/Projects/paperclip"
 SEND_SH="$BASE_DIR/projects/telegram/send.sh"
 LOG_FILE="$BASE_DIR/projects/ops/scripts/health.log"
 STALE_THRESHOLD_MIN=60
+TELEGRAM_POLL_STALE_THRESHOLD_MIN="${TELEGRAM_POLL_STALE_THRESHOLD_MIN:-10}"
+WHATSAPP_POLL_STALE_THRESHOLD_MIN="${WHATSAPP_POLL_STALE_THRESHOLD_MIN:-5}"
+WHATSAPP_SYNC_STALE_THRESHOLD_MIN="${WHATSAPP_SYNC_STALE_THRESHOLD_MIN:-90}"
 SERVER="root@64.226.74.167"
 VIEWER_LABEL="com.paperclip.whatsapp-viewer"
 VIEWER_HEALTH_URL="${WHATSAPP_VIEWER_HEALTH_URL:-http://127.0.0.1:5050/healthz}"
@@ -139,6 +142,8 @@ fresh_first=true
 check_freshness() {
     local name="$1"
     local filepath="$2"
+    local threshold_min="${3:-$STALE_THRESHOLD_MIN}"
+    local source_mode="${4:-mtime}"
     $fresh_first || FRESH_JSON+=","
     fresh_first=false
     if [ ! -f "$filepath" ]; then
@@ -147,24 +152,59 @@ check_freshness() {
         add_alert "Data: $name file not found"
         return
     fi
-    local mod_epoch
-    mod_epoch=$(stat -f %m "$filepath" 2>/dev/null)
-    local age_sec=$(( NOW_EPOCH - mod_epoch ))
+    local sample=""
+    local sample_epoch=0
+    if [ "$source_mode" = "json_last_poll" ]; then
+        sample="$(jq -r '.last_poll // empty' "$filepath" 2>/dev/null || true)"
+        if [ -z "$sample" ]; then
+            FRESH_JSON+="\"$name\":{\"age_min\":null,\"ok\":false,\"error\":\"missing_last_poll\"}"
+            HEALTHY=false
+            add_alert "Data: $name missing last_poll"
+            return
+        fi
+        sample_epoch="$(python3 - "$sample" <<'PY'
+import datetime
+import sys
+
+value = sys.argv[1]
+try:
+    dt = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+except ValueError:
+    print(0)
+    raise SystemExit(0)
+
+print(int(dt.replace(tzinfo=datetime.timezone.utc).timestamp()))
+PY
+)"
+        if [ "$sample_epoch" -le 0 ]; then
+            FRESH_JSON+="\"$name\":{\"age_min\":null,\"ok\":false,\"error\":\"invalid_last_poll\"}"
+            HEALTHY=false
+            add_alert "Data: $name invalid last_poll"
+            return
+        fi
+    else
+        sample_epoch="$(stat -f %m "$filepath" 2>/dev/null || echo 0)"
+    fi
+    local age_sec=$(( NOW_EPOCH - sample_epoch ))
     local age_min=$(( age_sec / 60 ))
     local ok=true
-    if [ "$age_min" -gt "$STALE_THRESHOLD_MIN" ]; then
+    if [ "$age_min" -gt "$threshold_min" ]; then
         ok=false
         HEALTHY=false
         add_alert "Data: $name stale (${age_min}m)"
     fi
-    FRESH_JSON+="\"$name\":{\"age_min\":$age_min,\"ok\":$ok}"
+    FRESH_JSON+="\"$name\":{\"age_min\":$age_min,\"ok\":$ok,\"threshold_min\":$threshold_min"
+    if [ "$source_mode" = "json_last_poll" ]; then
+        FRESH_JSON+=",\"last_poll\":$(json_escape "$sample")"
+    fi
+    FRESH_JSON+="}"
 }
 
-# Use state.json for telegram_poll — it's updated every poll cycle regardless of new messages.
-# poll.log only updates when there ARE new messages, causing false stale alerts.
-check_freshness "telegram_poll" "$BASE_DIR/projects/telegram/data/state.json"
-check_freshness "whatsapp_poll" "$BASE_DIR/projects/whatsapp/data/poll.log"
-check_freshness "whatsapp_sync" "$BASE_DIR/projects/whatsapp/data/sync.log"
+# Use state.json last_poll for pollers — it updates every poll cycle regardless
+# of whether new inbound messages arrived, so it measures poller liveness directly.
+check_freshness "telegram_poll" "$BASE_DIR/projects/telegram/data/state.json" "$TELEGRAM_POLL_STALE_THRESHOLD_MIN" "json_last_poll"
+check_freshness "whatsapp_poll" "$BASE_DIR/projects/whatsapp/data/state.json" "$WHATSAPP_POLL_STALE_THRESHOLD_MIN" "json_last_poll"
+check_freshness "whatsapp_sync" "$BASE_DIR/projects/whatsapp/data/sync.log" "$WHATSAPP_SYNC_STALE_THRESHOLD_MIN" "mtime"
 FRESH_JSON+="}"
 
 # Build alerts JSON array
