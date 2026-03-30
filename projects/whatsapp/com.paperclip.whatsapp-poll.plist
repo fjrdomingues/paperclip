@@ -6,8 +6,8 @@
     <string>com.paperclip.whatsapp-poll</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/fabiodomingues/Desktop/Projects/paperclip/projects/whatsapp/poll-inbox.sh</string>
+        <string>/Users/fabiodomingues/miniconda3/bin/python3</string>
+        <string>/Users/fabiodomingues/Desktop/Projects/paperclip/projects/whatsapp/run-poll.py</string>
     </array>
     <key>StartInterval</key>
     <integer>60</integer>
