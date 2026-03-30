@@ -9,6 +9,9 @@ SEND_SH="$BASE_DIR/projects/telegram/send.sh"
 LOG_FILE="$BASE_DIR/projects/ops/scripts/health.log"
 STALE_THRESHOLD_MIN=60
 SERVER="root@64.226.74.167"
+VIEWER_LABEL="com.paperclip.whatsapp-viewer"
+VIEWER_HEALTH_URL="${WHATSAPP_VIEWER_HEALTH_URL:-http://127.0.0.1:5050/healthz}"
+VIEWER_HEALTH_TIMEOUT_SEC="${WHATSAPP_VIEWER_HEALTH_TIMEOUT_SEC:-3}"
 
 TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 HEALTHY=true
@@ -17,6 +20,55 @@ ALERTS=""
 add_alert() {
     if [ -n "$ALERTS" ]; then ALERTS="$ALERTS|$1"; else ALERTS="$1"; fi
 }
+
+json_escape() {
+    printf '%s' "$1" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'
+}
+
+# launchctl exit/signals are historical for KeepAlive jobs. Use the viewer's
+# HTTP probe as the live signal, and treat launchctl history as responder context.
+VIEWER_PRINT="$(launchctl print "gui/$(id -u)/$VIEWER_LABEL" 2>/dev/null || true)"
+VIEWER_STATE="$(printf '%s\n' "$VIEWER_PRINT" | sed -n 's/^[[:space:]]*state = //p' | head -n1 | tr -d '[:space:]')"
+VIEWER_PRINT_PID_RAW="$(printf '%s\n' "$VIEWER_PRINT" | sed -n 's/^[[:space:]]*pid = //p' | head -n1 | tr -d '[:space:]')"
+VIEWER_LAST_SIGNAL="$(printf '%s\n' "$VIEWER_PRINT" | sed -n 's/^[[:space:]]*last terminating signal = //p' | head -n1)"
+VIEWER_HTTP_OK=false
+VIEWER_HTTP_CODE=null
+VIEWER_HTTP_ERROR=""
+VIEWER_CURL_EXIT=0
+VIEWER_CURL_ERR="$(mktemp)"
+VIEWER_HTTP_CODE_RAW="$(curl -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout 1 \
+    --max-time "$VIEWER_HEALTH_TIMEOUT_SEC" \
+    "$VIEWER_HEALTH_URL" 2>"$VIEWER_CURL_ERR")" || VIEWER_CURL_EXIT=$?
+if [ "$VIEWER_CURL_EXIT" -eq 0 ] && [ "$VIEWER_HTTP_CODE_RAW" = "200" ]; then
+    VIEWER_HTTP_OK=true
+fi
+if [ -n "$VIEWER_HTTP_CODE_RAW" ] && [ "$VIEWER_HTTP_CODE_RAW" != "000" ]; then
+    VIEWER_HTTP_CODE="$VIEWER_HTTP_CODE_RAW"
+fi
+if [ -s "$VIEWER_CURL_ERR" ]; then
+    VIEWER_HTTP_ERROR="$(tr '\n' ' ' < "$VIEWER_CURL_ERR" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+fi
+rm -f "$VIEWER_CURL_ERR"
+
+VIEWER_PID=null
+VIEWER_LIVE_PID=false
+if [ -n "$VIEWER_PRINT_PID_RAW" ] && [ "$VIEWER_PRINT_PID_RAW" != "0" ]; then
+    VIEWER_PID="$VIEWER_PRINT_PID_RAW"
+    VIEWER_LIVE_PID=true
+fi
+
+VIEWER_OK=$VIEWER_HTTP_OK
+if ! $VIEWER_HTTP_OK; then
+    HEALTHY=false
+    add_alert "Viewer: health probe failed ($VIEWER_HEALTH_URL code=${VIEWER_HTTP_CODE_RAW:-000})"
+fi
+
+VIEWER_JSON="{\"health_url\":$(json_escape "$VIEWER_HEALTH_URL"),\"http_ok\":$VIEWER_HTTP_OK,\"http_code\":$VIEWER_HTTP_CODE,\"launchctl_state\":$(json_escape "$VIEWER_STATE"),\"pid\":$VIEWER_PID,\"live_pid\":$VIEWER_LIVE_PID,\"last_terminating_signal\":$(json_escape "$VIEWER_LAST_SIGNAL"),\"ok\":$VIEWER_OK"
+if [ -n "$VIEWER_HTTP_ERROR" ]; then
+    VIEWER_JSON+=",\"http_error\":$(json_escape "$VIEWER_HTTP_ERROR")"
+fi
+VIEWER_JSON+="}"
 
 # --- A. LaunchAgent Health ---
 LA_JSON="{"
@@ -30,12 +82,16 @@ while IFS=$'\t' read -r pid exit_code label; do
     [ "$pid" = "-" ] && pid_val="null"
     if [ "$exit_code" != "0" ] && [ "$exit_code" != "-" ]; then
         # KeepAlive services may show a stale exit code but still be running
-        if [ "$pid" != "-" ] && [ -n "$pid" ]; then
+        if [ "$label" = "$VIEWER_LABEL" ] && { $VIEWER_LIVE_PID || $VIEWER_HTTP_OK; }; then
+            ok=true
+        elif [ "$pid" != "-" ] && [ -n "$pid" ]; then
             ok=true  # Running with PID — previous crash was recovered
         else
             ok=false
-            HEALTHY=false
-            add_alert "LaunchAgent $label exit=$exit_code"
+            if [ "$label" != "$VIEWER_LABEL" ]; then
+                HEALTHY=false
+                add_alert "LaunchAgent $label exit=$exit_code"
+            fi
         fi
     fi
     $first || LA_JSON+=","
@@ -125,7 +181,7 @@ fi
 ALERTS_JSON+="]"
 
 # --- Build Final JSON ---
-RESULT="{\"timestamp\":\"$TIMESTAMP\",\"healthy\":$HEALTHY,\"launchagents\":$LA_JSON,\"server\":$SERVER_JSON,\"data_freshness\":$FRESH_JSON,\"alerts\":$ALERTS_JSON}"
+RESULT="{\"timestamp\":\"$TIMESTAMP\",\"healthy\":$HEALTHY,\"viewer\":$VIEWER_JSON,\"launchagents\":$LA_JSON,\"server\":$SERVER_JSON,\"data_freshness\":$FRESH_JSON,\"alerts\":$ALERTS_JSON}"
 
 # Pretty print to stdout
 echo "$RESULT" | python3 -m json.tool 2>/dev/null || echo "$RESULT"

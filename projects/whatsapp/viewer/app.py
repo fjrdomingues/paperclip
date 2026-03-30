@@ -176,6 +176,15 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/healthz")
+def healthz():
+    return jsonify({
+        "ok": True,
+        "service": "whatsapp-viewer",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 @app.route("/api/media/<message_sid>/<media_sid>")
 @login_required
 def api_media_proxy(message_sid, media_sid):
