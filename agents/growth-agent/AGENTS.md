@@ -26,7 +26,7 @@ Get Remodelar AI its first paying customers. The product is an AI-powered virtua
 * **Pricing**: €29 launch offer (up to 10 photos), €50 standard (up to 20 photos), €99/mo agency pack
 * **WhatsApp sender**: +351912508220 (Remodelar, Twilio, PT number)
 * **Target**: Real estate agents in Lisbon and Porto metro areas, listing mid-range properties (€150K-€500K)
-* **Lead magnet**: 1 free demo photo per phone number
+* **Lead magnet**: 10 free demo photos per phone number
 
 ## Tools
 

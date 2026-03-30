@@ -49,7 +49,7 @@
       "variables": {
         "1": "agent_first_name"
       },
-      "body": "Olá {{1}}! 👋\n\nSou da Remodelar AI — fazemos home staging virtual com IA para agentes imobiliários.\n\nTransformamos fotos de imóveis vazios em espaços decorados em 24h, a partir de €29.\n\nQuer experimentar? Oferecemos 1 foto gratuita para ver o resultado. Basta enviar uma foto de um dos seus imóveis.",
+      "body": "Olá {{1}}! 👋\n\nSou da Remodelar AI — fazemos home staging virtual com IA para agentes imobiliários.\n\nTransformamos fotos de imóveis vazios em espaços decorados em 24h, a partir de €29.\n\nQuer experimentar? Oferecemos 10 fotos gratuitas para ver o resultado. Basta enviar uma foto de um dos seus imóveis.",
       "notes": "Resubmitted 2026-03-25 (WIN-64), replaced remodelar.ai with Remodelar AI. Awaiting Meta approval."
     },
     {
@@ -63,7 +63,7 @@
         "1": "agent_first_name",
         "2": "city"
       },
-      "body": "Olá {{1}}! 👋\n\nVi que trabalha no mercado imobiliário em {{2}}. Muitos agentes na zona de Lisboa estão a usar home staging virtual para destacar imóveis nos portais — e vender mais rápido.\n\nNa Remodelar AI, transformamos fotos vazios em espaços decorados com IA, em 24h, a partir de €29.\n\nQuer ver como ficaria um dos seus imóveis? Oferecemos 1 foto gratuita. Basta enviar uma foto! 📸",
+      "body": "Olá {{1}}! 👋\n\nVi que trabalha no mercado imobiliário em {{2}}. Muitos agentes na zona de Lisboa estão a usar home staging virtual para destacar imóveis nos portais — e vender mais rápido.\n\nNa Remodelar AI, transformamos fotos vazios em espaços decorados com IA, em 24h, a partir de €29.\n\nQuer ver como ficaria um dos seus imóveis? Oferecemos 10 fotos gratuitas. Basta enviar uma foto! 📸",
       "notes": "Submitted to Twilio Content API 2026-03-30 (WIN-256). Approval request sent to Meta. Awaiting Meta approval."
     },
     {
@@ -77,7 +77,7 @@
         "1": "agent_first_name",
         "2": "city"
       },
-      "body": "Olá {{1}}! 👋\n\nVi que trabalha no mercado imobiliário em {{2}}. No Porto, imóveis com staging virtual geram até 30% mais visitas nos portais — e vendem mais rápido.\n\nNa Remodelar AI, fazemos home staging virtual com IA a partir de €29, entregue em 24h.\n\nQuer experimentar? Enviamos 1 transformação gratuita. Basta responder com uma foto! 📸",
+      "body": "Olá {{1}}! 👋\n\nVi que trabalha no mercado imobiliário em {{2}}. No Porto, imóveis com staging virtual geram até 30% mais visitas nos portais — e vendem mais rápido.\n\nNa Remodelar AI, fazemos home staging virtual com IA a partir de €29, entregue em 24h.\n\nQuer experimentar? Enviamos 10 transformações gratuitas. Basta responder com uma foto! 📸",
       "notes": "Submitted to Twilio Content API 2026-03-30 (WIN-256). Approval request sent to Meta. Awaiting Meta approval."
     },
     {
@@ -92,7 +92,7 @@
         "2": "agency_short_name",
         "3": "city"
       },
-      "body": "Olá {{1}}! 👋\n\nTrabalha com a {{2}} em {{3}}, certo? Temos ajudado agentes a destacar imóveis nos portais com home staging virtual por IA.\n\nTransformamos fotos de imóveis vazios em espaços decorados em 24h, a partir de €29.\n\nQuer ver o resultado? Oferecemos 1 foto gratuita — basta enviar uma foto de um imóvel! 📸",
+      "body": "Olá {{1}}! 👋\n\nTrabalha com a {{2}} em {{3}}, certo? Temos ajudado agentes a destacar imóveis nos portais com home staging virtual por IA.\n\nTransformamos fotos de imóveis vazios em espaços decorados em 24h, a partir de €29.\n\nQuer ver o resultado? Oferecemos 10 fotos gratuitas — basta enviar uma foto de um imóvel! 📸",
       "notes": "Submitted to Twilio Content API 2026-03-30 (WIN-256). Approval request sent to Meta. Awaiting Meta approval."
     },
     {
