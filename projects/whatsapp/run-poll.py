@@ -7,6 +7,9 @@ import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
+DATA_DIR = os.environ.get("WHATSAPP_POLL_DATA_DIR", os.path.join(SCRIPT_DIR, "data"))
+INBOX_FILE = os.environ.get("WHATSAPP_POLL_INBOX_FILE", os.path.join(DATA_DIR, "inbox.jsonl"))
+DB_PATH = os.environ.get("WHATSAPP_DB_PATH", os.path.join(DATA_DIR, "whatsapp.db"))
 
 script = os.path.join(SCRIPT_DIR, "poll-inbox.sh")
 subprocess.run(["/bin/bash", script], check=False)
@@ -14,9 +17,8 @@ subprocess.run(["/bin/bash", script], check=False)
 # Sync inbox.jsonl → SQLite (idempotent via UNIQUE twilio_sid)
 import db as whatsapp_db
 
-INBOX_FILE = os.path.join(SCRIPT_DIR, "data", "inbox.jsonl")
 if os.path.exists(INBOX_FILE):
-    conn = whatsapp_db.get_db()
+    conn = whatsapp_db.get_db(DB_PATH)
     whatsapp_db.init_db(conn)
     count = 0
     with open(INBOX_FILE, "r", encoding="utf-8") as f:

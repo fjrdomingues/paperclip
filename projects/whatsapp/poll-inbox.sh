@@ -8,15 +8,18 @@ set -euo pipefail
 # Designed to run every 60s via launchd. No Paperclip dependency.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DATA_DIR="$SCRIPT_DIR/data"
-STATE_FILE="$DATA_DIR/state.json"
-INBOX_FILE="$DATA_DIR/inbox.jsonl"
-LOG_FILE="$DATA_DIR/poll.log"
+DATA_DIR="${WHATSAPP_POLL_DATA_DIR:-$SCRIPT_DIR/data}"
+STATE_FILE="${WHATSAPP_POLL_STATE_FILE:-$DATA_DIR/state.json}"
+INBOX_FILE="${WHATSAPP_POLL_INBOX_FILE:-$DATA_DIR/inbox.jsonl}"
+LOG_FILE="${WHATSAPP_POLL_LOG_FILE:-$DATA_DIR/poll.log}"
+MOCK_RESPONSE_FILE="${WHATSAPP_POLL_MOCK_RESPONSE_FILE:-}"
+SEEN_SIDS_FILE="$(mktemp)"
+trap 'rm -f "$SEEN_SIDS_FILE"' EXIT
 
 mkdir -p "$DATA_DIR"
 
 # Load Twilio credentials from telegram/.env
-ENV_FILE="$SCRIPT_DIR/../telegram/.env"
+ENV_FILE="${WHATSAPP_POLL_ENV_FILE:-$SCRIPT_DIR/../telegram/.env}"
 if [ -f "$ENV_FILE" ]; then
   set -a
   # shellcheck disable=SC1090
@@ -35,7 +38,7 @@ WHATSAPP_TO_ENCODED="$(echo "$WHATSAPP_TO" | sed 's/:/%3A/g; s/+/%2B/g')"
 
 # --- Log rotation ---
 LOG_MAX_LINES=1000
-LAUNCHD_LOG_DIR="$HOME/.paperclip/logs"
+LAUNCHD_LOG_DIR="${WHATSAPP_POLL_LAUNCHD_LOG_DIR:-$HOME/.paperclip/logs}"
 
 rotate_log() {
   local log_file="$1"
@@ -85,12 +88,41 @@ twilio_date_to_epoch() {
 
 # Convert ISO-8601 UTC string to epoch
 iso_to_epoch() {
-  date -jf "%Y-%m-%dT%H:%M:%SZ" "$1" "+%s" 2>/dev/null || echo 0
+  date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" "+%s" 2>/dev/null || echo 0
+}
+
+init_seen_sids() {
+  : > "$SEEN_SIDS_FILE"
+  if [ -f "$INBOX_FILE" ]; then
+    jq -r '.sid? // empty' "$INBOX_FILE" 2>/dev/null | sed '/^$/d' | sort -u > "$SEEN_SIDS_FILE" || true
+  fi
+}
+
+sid_seen() {
+  local sid="$1"
+  [ -n "$sid" ] && grep -Fxq "$sid" "$SEEN_SIDS_FILE"
+}
+
+mark_sid_seen() {
+  local sid="$1"
+  [ -n "$sid" ] && printf '%s\n' "$sid" >> "$SEEN_SIDS_FILE"
+}
+
+fetch_twilio_response() {
+  if [ -n "$MOCK_RESPONSE_FILE" ]; then
+    cat "$MOCK_RESPONSE_FILE"
+    return
+  fi
+
+  curl -fsS --max-time 30 \
+    -u "${TWILIO_API_KEY_SID}:${TWILIO_API_KEY_SECRET}" \
+    "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json?To=${WHATSAPP_TO_ENCODED}&PageSize=50&DateSent%3E%3D${DATE_FILTER}"
 }
 
 # --- Main ---
 
 load_state
+init_seen_sids
 
 # Determine DateSent filter for Twilio API
 if [ -z "$LAST_POLL" ]; then
@@ -104,10 +136,7 @@ else
 fi
 
 # Poll Twilio Messages API
-RESPONSE="$(curl -fsS --max-time 30 \
-  -u "${TWILIO_API_KEY_SID}:${TWILIO_API_KEY_SECRET}" \
-  "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json?To=${WHATSAPP_TO_ENCODED}&PageSize=50&DateSent%3E%3D${DATE_FILTER}" \
-  2>>"$LOG_FILE")" || {
+RESPONSE="$(fetch_twilio_response 2>>"$LOG_FILE")" || {
   echo "$(date -Iseconds) ERROR: Twilio API request failed" >> "$LOG_FILE"
   exit 1
 }
@@ -144,6 +173,10 @@ while IFS= read -r MSG; do
     continue
   fi
 
+  if sid_seen "$SID"; then
+    continue
+  fi
+
   FROM="$(echo "$MSG" | jq -r '.from' | sed 's/whatsapp://')"
   BODY="$(echo "$MSG" | jq -r '.body // ""')"
   # Convert Twilio RFC 2822 to ISO-8601
@@ -157,6 +190,7 @@ while IFS= read -r MSG; do
     --arg status "received" \
     '{from: $from, body: $body, timestamp: $timestamp, sid: $sid, status: $status}' \
     >> "$INBOX_FILE"
+  mark_sid_seen "$SID"
 
   NEW_COUNT=$((NEW_COUNT + 1))
 
