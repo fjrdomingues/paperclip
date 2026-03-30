@@ -118,8 +118,13 @@ def load_sent_log():
 
 
 def load_inbox():
-    """Load inbox.jsonl. Returns dict: phone -> list of message dicts."""
+    """Load inbox.jsonl. Returns dict: phone -> list of message dicts.
+
+    Deduplicates by Twilio SID (field: "sid") to tolerate repeated append cycles
+    in the raw JSONL file. First-seen record wins.
+    """
     messages = {}
+    seen_sids: set = set()
     if not INBOX_FILE.exists():
         return messages
     with open(INBOX_FILE) as f:
@@ -129,6 +134,11 @@ def load_inbox():
                 continue
             try:
                 msg = json.loads(line)
+                sid = msg.get("sid", "")
+                if sid and sid in seen_sids:
+                    continue
+                if sid:
+                    seen_sids.add(sid)
                 phone = msg.get("from", "").strip()
                 if not phone.startswith("+"):
                     phone = "+" + phone.lstrip("+")
