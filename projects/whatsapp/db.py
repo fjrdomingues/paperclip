@@ -6,6 +6,21 @@ import sqlite3
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "data", "whatsapp.db")
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS conversation_exchanges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+    body TEXT,
+    twilio_sid TEXT,
+    stage_at_time TEXT,
+    variant TEXT,
+    sent_at TEXT NOT NULL,
+    processed_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_conv_exchanges_phone ON conversation_exchanges(phone);
+CREATE INDEX IF NOT EXISTS idx_conv_exchanges_sid ON conversation_exchanges(twilio_sid);
+
 CREATE TABLE IF NOT EXISTS leads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     phone TEXT UNIQUE NOT NULL,
@@ -373,3 +388,92 @@ def phone_already_sent(db, phone, template_name):
         (phone, template_name),
     ).fetchone()
     return row is not None
+
+
+# ---------------------------------------------------------------------------
+# Conversation exchange helpers (WIN-315)
+# ---------------------------------------------------------------------------
+
+CONVERSATION_TEMPLATE_VARIANT_MAP = {
+    "remodelar_conversa_mercado": "A",
+    "remodelar_conversa_elogio": "B",
+    "remodelar_conversa_desafio": "C",
+}
+
+CONVERSATION_OPENER_TEMPLATES = set(CONVERSATION_TEMPLATE_VARIANT_MAP.keys())
+
+
+def get_opener_variant(db, phone):
+    """Return the variant letter (A/B/C) for the conversation opener sent to this phone, or None."""
+    row = db.execute(
+        """SELECT template_name FROM outreach_messages
+           WHERE phone = ? AND template_name IN ('remodelar_conversa_mercado','remodelar_conversa_elogio','remodelar_conversa_desafio')
+             AND status = 'sent'
+           ORDER BY sent_at ASC LIMIT 1""",
+        (phone,),
+    ).fetchone()
+    if not row:
+        return None
+    return CONVERSATION_TEMPLATE_VARIANT_MAP.get(row["template_name"])
+
+
+def is_conversation_lead(db, phone):
+    """Return True if this phone received a conversation-first opener."""
+    row = db.execute(
+        """SELECT 1 FROM outreach_messages
+           WHERE phone = ? AND template_name IN ('remodelar_conversa_mercado','remodelar_conversa_elogio','remodelar_conversa_desafio')
+             AND status = 'sent'
+           LIMIT 1""",
+        (phone,),
+    ).fetchone()
+    return row is not None
+
+
+def add_conversation_exchange(db, phone, direction, body, twilio_sid, stage_at_time, variant, sent_at):
+    """Insert a conversation exchange. Skips duplicates by twilio_sid if provided."""
+    if twilio_sid:
+        db.execute(
+            """INSERT OR IGNORE INTO conversation_exchanges
+               (phone, direction, body, twilio_sid, stage_at_time, variant, sent_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (phone, direction, body, twilio_sid, stage_at_time, variant, sent_at),
+        )
+    else:
+        db.execute(
+            """INSERT INTO conversation_exchanges
+               (phone, direction, body, twilio_sid, stage_at_time, variant, sent_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (phone, direction, body, None, stage_at_time, variant, sent_at),
+        )
+
+
+def get_conversation_history(db, phone):
+    """Return ordered list of exchange dicts for a phone (outbound first, then inbound by time)."""
+    rows = db.execute(
+        """SELECT direction, body, stage_at_time, variant, sent_at, twilio_sid
+           FROM conversation_exchanges
+           WHERE phone = ?
+           ORDER BY sent_at ASC""",
+        (phone,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def has_processed_inbound(db, phone, twilio_sid):
+    """Return True if this inbound message was already processed by the conversation handler."""
+    row = db.execute(
+        """SELECT 1 FROM conversation_exchanges
+           WHERE phone = ? AND direction = 'inbound' AND twilio_sid = ?
+           LIMIT 1""",
+        (phone, twilio_sid),
+    ).fetchone()
+    return row is not None
+
+
+def get_exchange_count(db, phone):
+    """Return the number of exchanges (outbound + inbound) logged for this phone."""
+    row = db.execute(
+        "SELECT COUNT(*) as cnt FROM conversation_exchanges WHERE phone = ?",
+        (phone,),
+    ).fetchone()
+    return row["cnt"] if row else 0
