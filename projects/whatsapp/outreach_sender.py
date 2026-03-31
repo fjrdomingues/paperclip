@@ -181,6 +181,195 @@ def extract_first_name(full_name):
     return parts[0] if parts else full_name
 
 
+# --- Segment-based template selection (WIN-250) ---
+
+# Short agency names for template variable (long legal names → brand)
+AGENCY_SHORT_NAMES = {
+    "Prestígio Global - Sociedade de Mediação Imobiliária, S.A.": "RE/MAX Prestígio Global",
+    "FCGM - Sociedade de Mediação Imobiliária, S.A.": "RE/MAX FCGM",
+    "Sold Fast - Mediação Imobiliária, Lda": "RE/MAX Sold Fast",
+    "Worldwidexl Lda": "RE/MAX Worldwide",
+    "Sentir Lisboa - Mediação Imobiliária, Lda": "RE/MAX Sentir Lisboa",
+    "Dinastia Infalível Lda.": "RE/MAX Dinastia",
+    "EstorilHouse - Mediação Imobiliária, Lda": "RE/MAX EstorilHouse",
+    "Vintage Patamar - Mediação Imobiliária, Lda": "RE/MAX Vintage Patamar",
+    "Sold Now, Lda": "RE/MAX Sold Now",
+    "Duplo Prestígio - Mediação Imobiliária, Lda": "RE/MAX Duplo Prestígio",
+    "PartilhaNotável Mediação Imobiliária, Lda": "RE/MAX PartilhaNotável",
+    "João Bordalo - Mediação Imob. Lda": "RE/MAX João Bordalo",
+    "Maxloja - Mediação Imobiliária Lda": "RE/MAX Maxloja",
+    "Números Pautados, Lda": "RE/MAX Números Pautados",
+    "CENTURY 21": "Century 21",
+}
+
+LISBOA_REGION_CITIES = {
+    "Lisboa", "Cascais", "Oeiras", "Sintra", "Loures", "Amadora",
+    "Odivelas", "Vila Franca de Xira", "Almada", "Seixal", "Barreiro",
+    "Setúbal", "Sesimbra", "Palmela", "Montijo", "Alcochete", "Moita",
+}
+
+PORTO_REGION_CITIES = {
+    "Porto", "Vila Nova de Gaia", "Matosinhos", "Maia", "Gondomar",
+    "Valongo", "Vila do Conde", "Póvoa de Varzim", "Braga", "Guimarães",
+    "Espinho", "Santa Maria da Feira",
+}
+
+
+def get_agency_short_name(agency):
+    """Return a short, recognizable agency name for template variable."""
+    if not agency:
+        return None
+    if agency in AGENCY_SHORT_NAMES:
+        return AGENCY_SHORT_NAMES[agency]
+    # For unknown agencies, use as-is if short enough, else truncate at comma
+    if len(agency) <= 30:
+        return agency
+    short = agency.split(",")[0].split(" - ")[0].strip()
+    return short if short else agency[:30]
+
+
+def select_template_for_lead(lead, templates):
+    """Pick the best approved template for a lead based on segment.
+
+    Priority:
+    1. remodelar_agentes_agency — if agency known and template approved
+    2. remodelar_agentes_lisboa / _porto — if region matches and template approved
+    3. remodelar_agentes_outreach — fallback (always approved)
+
+    Returns (template_name, variables_dict).
+    """
+    city = (lead.get("city") or "").strip()
+    region = (lead.get("region") or "").strip()
+    agency = (lead.get("agency") or "").strip()
+    first_name = extract_first_name(lead.get("name", ""))
+
+    # Try agency-specific template
+    if agency and "remodelar_agentes_agency" in templates:
+        t = templates["remodelar_agentes_agency"]
+        if t["status"] == "approved" and t.get("sid"):
+            short_agency = get_agency_short_name(agency)
+            if short_agency and city:
+                return t["name"], {"1": first_name, "2": short_agency, "3": city}
+
+    # Try region-specific templates
+    if city in LISBOA_REGION_CITIES or region == "Lisboa":
+        if "remodelar_agentes_lisboa" in templates:
+            t = templates["remodelar_agentes_lisboa"]
+            if t["status"] == "approved" and t.get("sid"):
+                display_city = city if city else "Lisboa"
+                return t["name"], {"1": first_name, "2": display_city}
+
+    if city in PORTO_REGION_CITIES or region == "Porto":
+        if "remodelar_agentes_porto" in templates:
+            t = templates["remodelar_agentes_porto"]
+            if t["status"] == "approved" and t.get("sid"):
+                display_city = city if city else "Porto"
+                return t["name"], {"1": first_name, "2": display_city}
+
+    # Fallback to generic approved template
+    return "remodelar_agentes_outreach", {"1": first_name}
+
+
+# --- Follow-up sequence logic (WIN-251) ---
+
+# Follow-up touch definitions: (template_name, min_days_after_initial, max_days_after_initial)
+FOLLOWUP_SEQUENCE = [
+    {"touch": 1, "template": "remodelar_agentes_followup", "min_days": 2, "max_days": 4},
+    {"touch": 2, "template": "remodelar_agentes_closing", "min_days": 5, "max_days": 8},
+]
+
+# Stages that should NOT receive follow-ups
+FOLLOWUP_EXCLUDE_STAGES = {"opted_out", "demo_requested", "interested", "client"}
+
+
+def find_followup_eligible(sent_log, templates, touch_num, db_path=None):
+    """Find leads eligible for a specific follow-up touch.
+
+    Returns list of (phone, name, agency, initial_sent_at) for leads that:
+    - Received initial outreach N days ago (within touch window)
+    - Have NOT received this follow-up touch template yet
+    - Are NOT in an excluded contact stage
+    """
+    touch_def = next((t for t in FOLLOWUP_SEQUENCE if t["touch"] == touch_num), None)
+    if not touch_def:
+        return []
+
+    template_name = touch_def["template"]
+    if template_name not in templates or templates[template_name]["status"] != "approved":
+        return []  # Template not approved yet
+
+    now = datetime.now(timezone.utc)
+    min_delta = timedelta(days=touch_def["min_days"])
+    max_delta = timedelta(days=touch_def["max_days"])
+
+    # Get excluded phones from contact stages
+    excluded_phones = set()
+    if db_path:
+        import sqlite3
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.execute(
+                "SELECT phone FROM contact_stages WHERE stage IN ({})".format(
+                    ",".join("?" for _ in FOLLOWUP_EXCLUDE_STAGES)
+                ),
+                list(FOLLOWUP_EXCLUDE_STAGES)
+            )
+            excluded_phones = {row[0] for row in cursor.fetchall()}
+            conn.close()
+        except Exception:
+            pass
+
+    # Outreach template names
+    outreach_templates = {
+        "remodelar_agentes_outreach", "remodelar_agentes_lisboa",
+        "remodelar_agentes_porto", "remodelar_agentes_agency",
+    }
+
+    eligible = []
+    for phone, entries in sent_log.items():
+        if phone in excluded_phones:
+            continue
+
+        # Find initial outreach send time
+        initial_send = None
+        for e in entries:
+            if e.get("template_name") in outreach_templates and e.get("status") == "sent":
+                try:
+                    initial_send = datetime.fromisoformat(e["sent_at"].rstrip("Z")).replace(tzinfo=timezone.utc)
+                except (ValueError, KeyError):
+                    pass
+                break
+
+        if not initial_send:
+            continue
+
+        # Check time window
+        elapsed = now - initial_send
+        if elapsed < min_delta or elapsed > max_delta:
+            continue
+
+        # Check if this touch was already sent
+        already_sent = any(
+            e.get("template_name") == template_name and e.get("status") == "sent"
+            for e in entries
+        )
+        if already_sent:
+            continue
+
+        # Get name/agency from any entry
+        name = next((e.get("name", "") for e in entries if e.get("name")), "")
+        agency = next((e.get("agency", "") for e in entries if e.get("agency")), "")
+
+        eligible.append({
+            "phone": phone,
+            "name": name,
+            "agency": agency,
+            "initial_sent_at": initial_send.isoformat(),
+        })
+
+    return eligible
+
+
 def load_sender_state():
     """Load one-shot sender state. Returns dict with defaults if missing."""
     defaults = {"next_send_at": None, "paused": False, "paused_at": None, "paused_reason": None}
@@ -248,6 +437,115 @@ def post_paperclip_alert(error_code, error_msg, phone, template_name):
         print(f"  [ALERT] Failed to post Paperclip alert: {exc}", file=sys.stderr)
 
 
+def run_follow_up(args, account_sid, api_key_sid, api_key_secret, from_number, templates):
+    """Send follow-up messages to eligible leads (WIN-251)."""
+    state = load_sender_state()
+
+    if state.get("paused"):
+        print(f"Outreach is PAUSED (reason: {state.get('paused_reason', 'unknown')}). Exiting.")
+        sys.exit(0)
+
+    if not is_business_hours() and not args.dry_run:
+        now_lisbon = datetime.now(LISBON_TZ)
+        print(f"Outside business hours ({now_lisbon.strftime('%H:%M %Z')}). Exiting.")
+        sys.exit(0)
+
+    touch_num = args.follow_up
+    touch_def = next((t for t in FOLLOWUP_SEQUENCE if t["touch"] == touch_num), None)
+    if not touch_def:
+        print(f"ERROR: Unknown touch number {touch_num}", file=sys.stderr)
+        sys.exit(1)
+
+    template_name = touch_def["template"]
+    if template_name not in templates:
+        print(f"ERROR: Template '{template_name}' not found in templates.json", file=sys.stderr)
+        sys.exit(1)
+
+    fu_template = templates[template_name]
+    if fu_template["status"] != "approved":
+        print(f"Template '{template_name}' is '{fu_template['status']}' — not yet approved by Meta. Cannot send.")
+        sys.exit(0)
+
+    sent_log = load_sent_log()
+    sent_today = count_sent_today(sent_log)
+
+    db_path = SCRIPT_DIR / "data" / "whatsapp.db"
+    eligible = find_followup_eligible(sent_log, templates, touch_num,
+                                       db_path=str(db_path) if db_path.exists() else None)
+
+    print(f"Follow-up touch {touch_num} ({template_name})")
+    print(f"  Window: {touch_def['min_days']}-{touch_def['max_days']} days after initial outreach")
+    print(f"  Eligible leads: {len(eligible)}")
+    print(f"  Sent today: {sent_today}/{args.daily_cap}")
+
+    if not eligible:
+        print("No eligible leads for this follow-up touch. Exiting.")
+        sys.exit(0)
+
+    sent_count = 0
+    for lead_info in eligible:
+        if sent_today + sent_count >= args.daily_cap:
+            print(f"  STOP: Daily cap of {args.daily_cap} reached")
+            break
+
+        phone = lead_info["phone"]
+        name = lead_info["name"]
+        agency = lead_info["agency"]
+        first_name = extract_first_name(name)
+        variables = {"1": first_name}
+
+        if args.dry_run:
+            print(f"  [DRY RUN] Would send touch {touch_num} '{template_name}' to {name} ({phone})")
+            sent_count += 1
+            continue
+
+        if args.one_shot and sent_count >= 1:
+            break  # one-shot: only 1 message
+
+        print(f"  Sending touch {touch_num} to {name} ({phone})...", end=" ", flush=True)
+        resp = send_template(account_sid, api_key_sid, api_key_secret, from_number, phone,
+                             fu_template["sid"], variables)
+
+        twilio_sid = resp.get("sid", "")
+        status = resp.get("status", "")
+        error_msg = resp.get("message") or resp.get("error_message") or ""
+
+        entry = {
+            "phone": phone,
+            "name": name,
+            "agency": agency,
+            "template_name": template_name,
+            "template_sid": fu_template["sid"],
+            "sent_at": datetime.utcnow().isoformat() + "Z",
+            "twilio_sid": twilio_sid,
+            "status": "sent" if status in ("queued", "sent") else "failed",
+            "error": error_msg if status not in ("queued", "sent") else "",
+        }
+        append_sent_log(entry)
+        _db = whatsapp_db.get_db()
+        whatsapp_db.add_outreach_message(_db, entry["phone"], entry["template_name"],
+                                         entry["template_sid"], entry["twilio_sid"],
+                                         entry["status"], entry["error"], entry["sent_at"])
+        _db.commit()
+        _db.close()
+
+        if status in ("queued", "sent"):
+            print(f"OK (SID: {twilio_sid})")
+            sent_count += 1
+        else:
+            print(f"FAILED (error={error_msg})")
+
+        if not args.one_shot:
+            time.sleep(RATE_LIMIT_DELAY)
+
+    if args.one_shot and sent_count > 0:
+        delay = schedule_next_send(state)
+        save_sender_state(state)
+        print(f"Next send in {delay}s.")
+
+    print(f"\nFollow-up touch {touch_num}: {sent_count} sent out of {len(eligible)} eligible")
+
+
 def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, templates):
     """Send at most 1 message, respecting 2-5 min random intervals via state file."""
     state = load_sender_state()
@@ -277,6 +575,12 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
 
     NON_PROSPECTABLE_STATUSES = {"cliente", "client", "customer", "do_not_contact"}
 
+    # Outreach template names for dedup (any initial outreach counts)
+    OUTREACH_TEMPLATES = {
+        "remodelar_agentes_outreach", "remodelar_agentes_lisboa",
+        "remodelar_agentes_porto", "remodelar_agentes_agency",
+    }
+
     # Find next unsent lead
     target_lead = None
     for lead in leads:
@@ -288,10 +592,17 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
         if not phone.startswith("+"):
             phone = "+" + phone.lstrip("0")
         if phone in sent_log:
-            already_sent = any(
-                e.get("template_name") == args.template and e.get("status") == "sent"
-                for e in sent_log[phone]
-            )
+            if args.personalized:
+                # In personalized mode, skip if any outreach template was sent
+                already_sent = any(
+                    e.get("template_name") in OUTREACH_TEMPLATES and e.get("status") == "sent"
+                    for e in sent_log[phone]
+                )
+            else:
+                already_sent = any(
+                    e.get("template_name") == args.template and e.get("status") == "sent"
+                    for e in sent_log[phone]
+                )
             if already_sent:
                 continue
         target_lead = {**lead, "phone": phone}
@@ -304,8 +615,14 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
     phone = target_lead["phone"]
     name = target_lead.get("name", "").strip()
     agency = target_lead.get("agency", "").strip()
-    first_name = extract_first_name(name)
-    variables = {"1": first_name}
+
+    # Personalized template selection (WIN-250)
+    if args.personalized:
+        selected_name, variables = select_template_for_lead(target_lead, templates)
+        template = templates[selected_name]
+    else:
+        first_name = extract_first_name(name)
+        variables = {"1": first_name}
 
     if args.dry_run:
         print(f"[DRY RUN] Would send '{template['name']}' to {name} ({phone}) vars={variables}")
@@ -314,7 +631,7 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
         print(f"Next send scheduled in {delay}s.")
         return
 
-    print(f"Sending to {name} ({phone})...", end=" ", flush=True)
+    print(f"Sending '{template['name']}' to {name} ({phone})...", end=" ", flush=True)
     resp = send_template(account_sid, api_key_sid, api_key_secret, from_number, phone,
                          template["sid"], variables)
 
@@ -327,11 +644,12 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
     except (ValueError, TypeError):
         error_code = 0
 
+    actual_template_name = template["name"]
     entry = {
         "phone": phone,
         "name": name,
         "agency": agency,
-        "template_name": args.template,
+        "template_name": actual_template_name,
         "template_sid": template["sid"],
         "sent_at": datetime.utcnow().isoformat() + "Z",
         "twilio_sid": twilio_sid,
@@ -361,7 +679,7 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
             state["paused_reason"] = f"Error {error_code}: {error_msg}"
             save_sender_state(state)
             print(f"RATE LIMIT ERROR {error_code} — outreach PAUSED. Posting Paperclip alert.")
-            post_paperclip_alert(error_code, error_msg, phone, args.template)
+            post_paperclip_alert(error_code, error_msg, phone, actual_template_name)
         else:
             # Non-rate-limit failure: still schedule next send
             delay = schedule_next_send(state)
@@ -381,6 +699,10 @@ def main():
                         help=f"Path to leads CSV (default: {LEADS_FILE})")
     parser.add_argument("--one-shot", action="store_true",
                         help="Send at most 1 message per run; tracks timing in sender_state.json")
+    parser.add_argument("--personalized", action="store_true",
+                        help="Select best approved template per lead based on segment (WIN-250)")
+    parser.add_argument("--follow-up", type=int, choices=[1, 2], default=None, metavar="TOUCH",
+                        help="Send follow-up touch N (1=48-72h, 2=5-7d) to eligible leads (WIN-251)")
     args = parser.parse_args()
 
     load_env()
@@ -394,6 +716,12 @@ def main():
         account_sid = api_key_sid = api_key_secret = from_number = ""
 
     templates = load_templates()
+
+    # Follow-up mode (WIN-251)
+    if args.follow_up is not None:
+        run_follow_up(args, account_sid, api_key_sid, api_key_secret, from_number, templates)
+        return
+
     if args.template not in templates:
         print(f"ERROR: Template '{args.template}' not found in {TEMPLATES_FILE}", file=sys.stderr)
         print(f"Available templates: {', '.join(templates.keys())}", file=sys.stderr)
@@ -403,17 +731,23 @@ def main():
         run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, templates)
         return
 
-    template = templates[args.template]
-    if template["status"] not in ("approved",):
-        print(f"WARNING: Template '{args.template}' status is '{template['status']}' (not 'approved')")
-        print("Meta may reject messages sent with unapproved templates.")
+    if not args.personalized:
+        template = templates[args.template]
+        if template["status"] not in ("approved",):
+            print(f"WARNING: Template '{args.template}' status is '{template['status']}' (not 'approved')")
+            print("Meta may reject messages sent with unapproved templates.")
+    else:
+        template = None  # selected per-lead below
 
     leads = load_leads(args.leads_file)
     sent_log = load_sent_log()
     sent_today = count_sent_today(sent_log)
 
     print(f"Loaded {len(leads)} leads from {args.leads_file}")
-    print(f"Template: {template['name']} (SID: {template['sid']}, status: {template['status']})")
+    if template:
+        print(f"Template: {template['name']} (SID: {template['sid']}, status: {template['status']})")
+    else:
+        print(f"Mode: personalized (best template per lead segment)")
     print(f"Sent today: {sent_today} / {args.daily_cap} daily cap")
 
     sent_count = 0
@@ -431,6 +765,10 @@ def main():
         sys.exit(0)
 
     NON_PROSPECTABLE_STATUSES = {"cliente", "client", "customer", "do_not_contact"}
+    OUTREACH_TEMPLATES_BATCH = {
+        "remodelar_agentes_outreach", "remodelar_agentes_lisboa",
+        "remodelar_agentes_porto", "remodelar_agentes_agency",
+    }
 
     for lead in leads:
         phone = lead.get("phone", "").strip()
@@ -451,12 +789,18 @@ def main():
         if not phone.startswith("+"):
             phone = "+" + phone.lstrip("0")
 
-        # Skip if already sent this template to this phone
+        # Skip if already sent outreach to this phone
         if phone in sent_log:
-            already_sent = any(
-                e.get("template_name") == args.template and e.get("status") == "sent"
-                for e in sent_log[phone]
-            )
+            if args.personalized:
+                already_sent = any(
+                    e.get("template_name") in OUTREACH_TEMPLATES_BATCH and e.get("status") == "sent"
+                    for e in sent_log[phone]
+                )
+            else:
+                already_sent = any(
+                    e.get("template_name") == args.template and e.get("status") == "sent"
+                    for e in sent_log[phone]
+                )
             if already_sent:
                 print(f"  SKIP (already sent): {name} {phone}")
                 skipped_count += 1
@@ -467,17 +811,23 @@ def main():
             print(f"  STOP: Daily cap of {args.daily_cap} reached")
             break
 
-        first_name = extract_first_name(name)
-        variables = {"1": first_name}
+        # Select template and variables
+        if args.personalized:
+            selected_name, variables = select_template_for_lead(lead, templates)
+            lead_template = templates[selected_name]
+        else:
+            lead_template = template
+            first_name = extract_first_name(name)
+            variables = {"1": first_name}
 
         if args.dry_run:
-            print(f"  [DRY RUN] Would send '{template['name']}' to {name} ({phone}) vars={variables}")
+            print(f"  [DRY RUN] Would send '{lead_template['name']}' to {name} ({phone}) vars={variables}")
             sent_count += 1
             continue
 
-        print(f"  Sending to {name} ({phone})...", end=" ", flush=True)
+        print(f"  Sending '{lead_template['name']}' to {name} ({phone})...", end=" ", flush=True)
         resp = send_template(account_sid, api_key_sid, api_key_secret, from_number, phone,
-                             template["sid"], variables)
+                             lead_template["sid"], variables)
 
         twilio_sid = resp.get("sid", "")
         status = resp.get("status", "")
@@ -487,8 +837,8 @@ def main():
             "phone": phone,
             "name": name,
             "agency": agency,
-            "template_name": args.template,
-            "template_sid": template["sid"],
+            "template_name": lead_template["name"],
+            "template_sid": lead_template["sid"],
             "sent_at": datetime.utcnow().isoformat() + "Z",
             "twilio_sid": twilio_sid,
             "status": "sent" if status in ("queued", "sent") else "failed",

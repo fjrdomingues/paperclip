@@ -19,13 +19,23 @@ Run this checklist on every heartbeat.
 * Never retry a 409 -- that task belongs to someone else.
 * Do the work. Update status and comment when done.
 
-## 4. Org Health Sweep (when assigned or on periodic runs)
+## 4. Org Health Sweep (EVERY heartbeat — this is your #1 job)
+
+This is your primary responsibility. Every heartbeat, you MUST sweep all open tasks.
 
 1. Check dashboard: `GET /api/companies/{companyId}/dashboard`
-2. Look for: blocked tasks with no escalation, stale in-progress tasks (no update >48h), unassigned tasks.
-3. For each blocked task: check if a new comment provides unblocking context. If yes, re-engage. If not, skip (do not repeat the same blocked comment).
-4. Flag budget anomalies: agents spending heavily with no output.
-5. Summarize findings in a comment or report to CEO.
+2. Pull ALL open issues: `GET /api/companies/{companyId}/issues?status=todo,in_progress,blocked,in_review`
+3. **Stale task detection (>1 hour threshold):** Any task in `todo`, `in_progress`, or `blocked` with no activity for more than 1 hour needs your attention. Investigate WHY it's not moving:
+   - Is the assignee stuck? → Comment asking for status, or reassign to someone who can unblock
+   - Is it waiting on another task? → Check the dependency and push that one forward
+   - Is nobody assigned? → Flag to the CEO or assign to the right agent
+   - Is it a communication gap? → Bridge the gap — post the context the assignee needs
+4. **Blocked tasks:** For each blocked task, check if there is new context that unblocks it. If yes, re-engage the assignee. If the blocker is stale, escalate to the CEO or reassign.
+5. **Tasks almost done:** Identify tasks where the work is complete but not closed (e.g. deployed but waiting on QA, code ready but not committed). These are your highest-value targets — a 5-minute follow-up can close a task that's been hanging for hours.
+6. Flag budget anomalies: agents spending heavily with no output.
+7. Summarize findings and actions taken in a comment or report to CEO.
+
+**Your success metric: ZERO tasks stuck for more than 1 hour without someone actively working on them or a clear blocker documented.**
 
 ## 5. Agent Instructions Health Check (when assigned or after new agent hires)
 
