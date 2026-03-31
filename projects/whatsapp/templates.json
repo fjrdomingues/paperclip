@@ -121,5 +121,48 @@
       "body": "Olá {{1}}, última mensagem da nossa parte! 🙂\n\nA nossa oferta de lançamento de €29 por até 10 fotos está disponível por tempo limitado.\n\nSe quiser experimentar antes de decidir, a demo gratuita ainda está disponível.\n\nBasta responder \"quero\" e tratamos de tudo! 🏡",
       "notes": "Submitted 2026-03-24 (WIN-61), awaiting Meta approval. Agent-specific closing (5 days)."
     }
+    ,
+    {
+      "sid": "HXdf5b242f5507e7fc95506745cb44799d",
+      "friendly_name": "remodelar_conversa_mercado",
+      "name": "remodelar_conversa_mercado",
+      "category": "MARKETING",
+      "language": "pt_PT",
+      "status": "pending",
+      "variables": {
+        "1": "agent_first_name",
+        "2": "city"
+      },
+      "body": "Olá {{1}}, vi que tem imóveis em {{2}}. Tenho acompanhado a zona e reparei que há muita diferença no tempo de venda dependendo da apresentação das fotos. Na sua experiência, os compradores reagem mais quando o imóvel está mobilado ou vazio?",
+      "notes": "Submitted to Twilio Content API 2026-03-31 (WIN-313). Approval request sent to Meta. Awaiting Meta approval. Conversation-first variant A."
+    },
+    {
+      "sid": "HX7c26fa28dcb441484b1b628bf3922052",
+      "friendly_name": "remodelar_conversa_elogio",
+      "name": "remodelar_conversa_elogio",
+      "category": "MARKETING",
+      "language": "pt_PT",
+      "status": "pending",
+      "variables": {
+        "1": "agent_first_name",
+        "2": "city"
+      },
+      "body": "Olá {{1}}, encontrei os seus anúncios no Idealista enquanto fazia uma pesquisa sobre o mercado em {{2}}. Uma curiosidade — como costuma preparar os imóveis antes de fotografar para os portais? Faz algum tipo de staging ou apresenta tal como está?",
+      "notes": "Submitted to Twilio Content API 2026-03-31 (WIN-313). Approval request sent to Meta. Awaiting Meta approval. Conversation-first variant B."
+    },
+    {
+      "sid": "HX0dfd7522ced5ff63e6d3cfd973c38431",
+      "friendly_name": "remodelar_conversa_desafio",
+      "name": "remodelar_conversa_desafio",
+      "category": "MARKETING",
+      "language": "pt_PT",
+      "status": "pending",
+      "variables": {
+        "1": "agent_first_name",
+        "2": "city"
+      },
+      "body": "Olá {{1}}, tenho conversado com agentes imobiliários em {{2}} sobre um tema que aparece sempre: imóveis que ficam semanas nos portais sem gerar visitas. É algo que encontra no seu dia-a-dia, ou na sua zona o mercado está a mexer bem?",
+      "notes": "Submitted to Twilio Content API 2026-03-31 (WIN-313). Approval request sent to Meta. Awaiting Meta approval. Conversation-first variant C."
+    }
   ]
 }
