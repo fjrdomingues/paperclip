@@ -8,7 +8,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <string>export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin; /usr/bin/python3 /Users/fabiodomingues/Desktop/Projects/paperclip/projects/whatsapp/outreach_sender.py --one-shot --daily-cap 50 >> /Users/fabiodomingues/.paperclip/logs/whatsapp-outreach-stdout.log 2>&amp;1</string>
+        <string>export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin; /usr/bin/python3 /Users/fabiodomingues/Desktop/Projects/paperclip/projects/whatsapp/outreach_sender.py --one-shot --personalized >> /Users/fabiodomingues/.paperclip/logs/whatsapp-outreach-stdout.log 2>&amp;1</string>
     </array>
     <key>StartInterval</key>
     <integer>60</integer>

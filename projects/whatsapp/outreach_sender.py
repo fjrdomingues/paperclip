@@ -63,7 +63,20 @@ SENDER_STATE_FILE = SCRIPT_DIR / "data" / "sender_state.json"
 # Error codes that indicate Meta rate-limiting / spam blocking
 RATE_LIMIT_ERROR_CODES = {63112, 63114, 63116, 21611}
 
-SENT_LOG_FIELDS = ["phone", "name", "agency", "template_name", "template_sid", "sent_at", "twilio_sid", "status", "error"]
+SENT_LOG_FIELDS = ["phone", "name", "agency", "template_name", "template_sid", "variant", "sent_at", "twilio_sid", "status", "error"]
+
+# Conversation-first templates (A/B/C rotation) — WIN-314
+CONVERSA_TEMPLATES = [
+    ("remodelar_conversa_mercado", "A"),
+    ("remodelar_conversa_elogio", "B"),
+    ("remodelar_conversa_desafio", "C"),
+]
+
+TEMPLATE_VARIANT_MAP = {
+    "remodelar_conversa_mercado": "A",
+    "remodelar_conversa_elogio": "B",
+    "remodelar_conversa_desafio": "C",
+}
 
 PAPERCLIP_API_URL = os.environ.get("PAPERCLIP_API_URL", "http://localhost:3100")
 WIN75_ISSUE_ID = "117b8e31-b203-42e6-b57e-63651eca6a69"
@@ -231,10 +244,13 @@ def get_agency_short_name(agency):
 def select_template_for_lead(lead, templates):
     """Pick the best approved template for a lead based on segment.
 
-    Priority:
-    1. remodelar_agentes_agency — if agency known and template approved
-    2. remodelar_agentes_lisboa / _porto — if region matches and template approved
-    3. remodelar_agentes_outreach — fallback (always approved)
+    Priority (WIN-314):
+    1. Conversation-first templates (random A/B/C rotation) — if any approved and lead has city
+    2. remodelar_agentes_agency — if agency known and template approved (legacy fallback)
+    3. remodelar_agentes_lisboa / _porto — if region matches and template approved (legacy fallback)
+    4. remodelar_agentes_outreach — final fallback (always approved)
+
+    Old pitch templates are deprecated: kept in file but not selected by default.
 
     Returns (template_name, variables_dict).
     """
@@ -242,6 +258,16 @@ def select_template_for_lead(lead, templates):
     region = (lead.get("region") or "").strip()
     agency = (lead.get("agency") or "").strip()
     first_name = extract_first_name(lead.get("name", ""))
+
+    # 1. Prefer approved conversation templates (random A/B/C rotation) — WIN-314
+    if city:
+        approved_conversa = [
+            name for name, _variant in CONVERSA_TEMPLATES
+            if name in templates and templates[name]["status"] == "approved" and templates[name].get("sid")
+        ]
+        if approved_conversa:
+            chosen = random.choice(approved_conversa)
+            return chosen, {"1": first_name, "2": city}
 
     # Try agency-specific template
     if agency and "remodelar_agentes_agency" in templates:
@@ -370,9 +396,27 @@ def find_followup_eligible(sent_log, templates, touch_num, db_path=None):
     return eligible
 
 
+def get_ramp_cap(state):
+    """Return daily cap from ramp schedule (WIN-314): 5/day wk1-2, 10/day wk3-4, 15/day wk5+."""
+    ramp_start = state.get("ramp_start_date")
+    if not ramp_start:
+        return 5  # default: week 1-2 rate until ramp starts
+    try:
+        start = date.fromisoformat(ramp_start)
+    except (ValueError, TypeError):
+        return 5
+    weeks_elapsed = (date.today() - start).days // 7
+    if weeks_elapsed < 2:
+        return 5
+    elif weeks_elapsed < 4:
+        return 10
+    else:
+        return 15
+
+
 def load_sender_state():
     """Load one-shot sender state. Returns dict with defaults if missing."""
-    defaults = {"next_send_at": None, "paused": False, "paused_at": None, "paused_reason": None}
+    defaults = {"next_send_at": None, "paused": False, "paused_at": None, "paused_reason": None, "ramp_start_date": None}
     if not SENDER_STATE_FILE.exists():
         return defaults
     try:
@@ -450,6 +494,9 @@ def run_follow_up(args, account_sid, api_key_sid, api_key_secret, from_number, t
         print(f"Outside business hours ({now_lisbon.strftime('%H:%M %Z')}). Exiting.")
         sys.exit(0)
 
+    # Compute effective daily cap: use ramp schedule if no explicit cap given (WIN-314)
+    effective_daily_cap = args.daily_cap if args.daily_cap is not None else get_ramp_cap(state)
+
     touch_num = args.follow_up
     touch_def = next((t for t in FOLLOWUP_SEQUENCE if t["touch"] == touch_num), None)
     if not touch_def:
@@ -476,7 +523,7 @@ def run_follow_up(args, account_sid, api_key_sid, api_key_secret, from_number, t
     print(f"Follow-up touch {touch_num} ({template_name})")
     print(f"  Window: {touch_def['min_days']}-{touch_def['max_days']} days after initial outreach")
     print(f"  Eligible leads: {len(eligible)}")
-    print(f"  Sent today: {sent_today}/{args.daily_cap}")
+    print(f"  Sent today: {sent_today}/{effective_daily_cap}")
 
     if not eligible:
         print("No eligible leads for this follow-up touch. Exiting.")
@@ -484,8 +531,8 @@ def run_follow_up(args, account_sid, api_key_sid, api_key_secret, from_number, t
 
     sent_count = 0
     for lead_info in eligible:
-        if sent_today + sent_count >= args.daily_cap:
-            print(f"  STOP: Daily cap of {args.daily_cap} reached")
+        if sent_today + sent_count >= effective_daily_cap:
+            print(f"  STOP: Daily cap of {effective_daily_cap} reached")
             break
 
         phone = lead_info["phone"]
@@ -516,6 +563,7 @@ def run_follow_up(args, account_sid, api_key_sid, api_key_secret, from_number, t
             "agency": agency,
             "template_name": template_name,
             "template_sid": fu_template["sid"],
+            "variant": TEMPLATE_VARIANT_MAP.get(template_name, ""),
             "sent_at": datetime.utcnow().isoformat() + "Z",
             "twilio_sid": twilio_sid,
             "status": "sent" if status in ("queued", "sent") else "failed",
@@ -564,13 +612,16 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
         print(f"Not time yet. Next send scheduled at {next_send}. Exiting.")
         sys.exit(0)
 
+    # Compute effective daily cap: use ramp schedule if no explicit cap given (WIN-314)
+    effective_daily_cap = args.daily_cap if args.daily_cap is not None else get_ramp_cap(state)
+
     template = templates[args.template]
     leads = load_leads(args.leads_file)
     sent_log = load_sent_log()
     sent_today = count_sent_today(sent_log)
 
-    if sent_today >= args.daily_cap:
-        print(f"Daily cap reached ({sent_today}/{args.daily_cap}). Exiting.")
+    if sent_today >= effective_daily_cap:
+        print(f"Daily cap reached ({sent_today}/{effective_daily_cap}). Exiting.")
         sys.exit(0)
 
     NON_PROSPECTABLE_STATUSES = {"cliente", "client", "customer", "do_not_contact"}
@@ -651,6 +702,7 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
         "agency": agency,
         "template_name": actual_template_name,
         "template_sid": template["sid"],
+        "variant": TEMPLATE_VARIANT_MAP.get(actual_template_name, ""),
         "sent_at": datetime.utcnow().isoformat() + "Z",
         "twilio_sid": twilio_sid,
         "status": "sent" if status in ("queued", "sent") else "failed",
@@ -668,9 +720,12 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
 
     if status in ("queued", "sent"):
         print(f"OK (SID: {twilio_sid})")
+        # Set ramp start date on first successful send (WIN-314)
+        if not state.get("ramp_start_date"):
+            state["ramp_start_date"] = date.today().isoformat()
         delay = schedule_next_send(state)
         save_sender_state(state)
-        print(f"Sent today: {sent_today + 1}/{args.daily_cap}. Next send in {delay}s.")
+        print(f"Sent today: {sent_today + 1}/{effective_daily_cap}. Next send in {delay}s.")
     else:
         print(f"FAILED (status={status}, code={error_code}, error={error_msg})")
         if error_code in RATE_LIMIT_ERROR_CODES:
@@ -691,8 +746,8 @@ def main():
     parser = argparse.ArgumentParser(description="WhatsApp Outreach Sender")
     parser.add_argument("--template", default="remodelar_agentes_outreach",
                         help="Template name to use (default: remodelar_agentes_outreach)")
-    parser.add_argument("--daily-cap", type=int, default=50,
-                        help="Max messages to send per day (default: 50)")
+    parser.add_argument("--daily-cap", type=int, default=None,
+                        help="Max messages to send per day (default: ramp schedule — 5/day wk1-2, 10 wk3-4, 15 wk5+)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print what would be sent without actually sending")
     parser.add_argument("--leads-file", type=Path, default=LEADS_FILE,
@@ -716,6 +771,11 @@ def main():
         account_sid = api_key_sid = api_key_secret = from_number = ""
 
     templates = load_templates()
+
+    # Compute effective daily cap (ramp schedule if no explicit --daily-cap given) — WIN-314
+    state = load_sender_state()
+    if args.daily_cap is None:
+        args.daily_cap = get_ramp_cap(state)
 
     # Follow-up mode (WIN-251)
     if args.follow_up is not None:
@@ -839,6 +899,7 @@ def main():
             "agency": agency,
             "template_name": lead_template["name"],
             "template_sid": lead_template["sid"],
+            "variant": TEMPLATE_VARIANT_MAP.get(lead_template["name"], ""),
             "sent_at": datetime.utcnow().isoformat() + "Z",
             "twilio_sid": twilio_sid,
             "status": "sent" if status in ("queued", "sent") else "failed",
