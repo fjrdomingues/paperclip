@@ -96,6 +96,12 @@ count_unique_sids() {
   fi
 }
 
+state_field() {
+  local case_dir="$1"
+  local field="$2"
+  jq -r --arg field "$field" '.[$field] // ""' "$case_dir/data/state.json"
+}
+
 printf "\nDST cursor repro\n"
 CASE1_DIR="$TMP_DIR/case1"
 mkdir -p "$CASE1_DIR/data"
@@ -176,6 +182,74 @@ assert_eq "$(count_inbox_lines "$CASE2_DIR")" "2" "duplicate SID is not re-appen
 assert_eq "$(count_unique_sids "$CASE2_DIR")" "2" "raw inbox preserves unique SIDs only"
 assert_eq "$(count_sid_occurrences "$CASE2_DIR" "SMexisting")" "1" "existing SID remains single-copy"
 assert_eq "$(count_sid_occurrences "$CASE2_DIR" "SMfresh2")" "1" "new SID is appended once"
+
+printf "\nCursor recovery and same-second boundary\n"
+CASE3_DIR="$TMP_DIR/case3"
+mkdir -p "$CASE3_DIR/data"
+jq -nc \
+  --arg from "+351918416949" \
+  --arg body "already stored inbound" \
+  --arg timestamp "2026-03-31T11:22:30Z" \
+  --arg sid "SMstored" \
+  --arg status "received" \
+  '{from: $from, body: $body, timestamp: $timestamp, sid: $sid, status: $status}' \
+  > "$CASE3_DIR/data/inbox.jsonl"
+jq -n \
+  --arg last_message_sid "SMstored" \
+  --arg last_poll "2026-03-31T14:50:00Z" \
+  '{"last_message_sid": $last_message_sid, "last_poll": $last_poll}' > "$CASE3_DIR/data/state.json"
+cat > "$CASE3_DIR/response-empty.json" <<'JSON'
+{
+  "messages": [
+    {
+      "sid": "SMstored",
+      "direction": "inbound",
+      "date_sent": "Tue, 31 Mar 2026 11:22:30 +0000",
+      "from": "whatsapp:+351918416949",
+      "body": "already stored inbound"
+    }
+  ]
+}
+JSON
+cat > "$CASE3_DIR/response-late.json" <<'JSON'
+{
+  "messages": [
+    {
+      "sid": "SMstored",
+      "direction": "inbound",
+      "date_sent": "Tue, 31 Mar 2026 11:22:30 +0000",
+      "from": "whatsapp:+351918416949",
+      "body": "already stored inbound"
+    },
+    {
+      "sid": "SMsame-second",
+      "direction": "inbound",
+      "date_sent": "Tue, 31 Mar 2026 11:22:30 +0000",
+      "from": "whatsapp:+351918416950",
+      "body": "same second, different sid"
+    },
+    {
+      "sid": "SMlate",
+      "direction": "inbound",
+      "date_sent": "Tue, 31 Mar 2026 11:22:51 +0000",
+      "from": "whatsapp:+351918416951",
+      "body": "late visible inbound"
+    }
+  ]
+}
+JSON
+
+cp "$CASE3_DIR/response-empty.json" "$CASE3_DIR/response.json"
+run_poller "$CASE3_DIR"
+assert_eq "$(state_field "$CASE3_DIR" "last_poll")" "2026-03-31T11:22:30Z" "stale cursor clamps back to the last stored SID timestamp"
+
+cp "$CASE3_DIR/response-late.json" "$CASE3_DIR/response.json"
+run_poller "$CASE3_DIR"
+assert_eq "$(count_sid_occurrences "$CASE3_DIR" "SMstored")" "1" "existing boundary SID stays deduped"
+assert_eq "$(count_sid_occurrences "$CASE3_DIR" "SMsame-second")" "1" "same-second unseen SID is still ingested"
+assert_eq "$(count_sid_occurrences "$CASE3_DIR" "SMlate")" "1" "late-visible inbound is recovered after cursor clamp"
+assert_eq "$(state_field "$CASE3_DIR" "last_message_sid")" "SMlate" "state tracks the newest recovered SID"
+assert_eq "$(state_field "$CASE3_DIR" "last_poll")" "2026-03-31T11:22:51Z" "cursor advances to the newest ingested timestamp"
 
 printf "\nSQLite sync\n"
 run_wrapper "$CASE2_DIR"

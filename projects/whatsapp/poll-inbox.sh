@@ -71,11 +71,12 @@ load_state() {
 
 save_state() {
   local sid="$1"
+  local last_poll="$2"
   local tmp
   tmp="$(mktemp)"
   jq -n \
     --arg last_message_sid "$sid" \
-    --arg last_poll "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    --arg last_poll "$last_poll" \
     '{"last_message_sid": $last_message_sid, "last_poll": $last_poll}' > "$tmp"
   mv "$tmp" "$STATE_FILE"
 }
@@ -95,6 +96,28 @@ init_seen_sids() {
   : > "$SEEN_SIDS_FILE"
   if [ -f "$INBOX_FILE" ]; then
     jq -r '.sid? // empty' "$INBOX_FILE" 2>/dev/null | sed '/^$/d' | sort -u > "$SEEN_SIDS_FILE" || true
+  fi
+}
+
+clamp_cursor_to_last_seen_sid() {
+  local response="$1"
+
+  if [ -z "$LAST_POLL" ] || [ -z "$LAST_SID" ]; then
+    return
+  fi
+
+  local last_sid_date_sent
+  last_sid_date_sent="$(echo "$response" | jq -r --arg sid "$LAST_SID" '.messages[] | select(.sid == $sid) | .date_sent // empty' | head -n 1)"
+  if [ -z "$last_sid_date_sent" ]; then
+    return
+  fi
+
+  local last_sid_epoch
+  last_sid_epoch="$(twilio_date_to_epoch "$last_sid_date_sent")"
+  if [ "$last_sid_epoch" -gt 0 ] && [ "$LAST_POLL_EPOCH" -gt "$last_sid_epoch" ]; then
+    LAST_POLL="$(date -u -jf "%a, %d %b %Y %H:%M:%S %z" "$last_sid_date_sent" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "$LAST_POLL")"
+    LAST_POLL_EPOCH="$last_sid_epoch"
+    echo "$(date -Iseconds) INFO: clamped stale cursor to last seen SID timestamp ($LAST_SID @ $LAST_POLL)" >> "$LOG_FILE"
   fi
 }
 
@@ -147,10 +170,13 @@ if ! echo "$RESPONSE" | jq -e '.messages' > /dev/null 2>&1; then
   exit 1
 fi
 
+clamp_cursor_to_last_seen_sid "$RESPONSE"
+
 TOTAL="$(echo "$RESPONSE" | jq '.messages | length')"
 NEW_COUNT=0
 NEWEST_SID="$LAST_SID"
-NEWEST_EPOCH=0
+NEWEST_EPOCH="$LAST_POLL_EPOCH"
+NEWEST_TIMESTAMP="$LAST_POLL"
 
 # Process inbound messages
 while IFS= read -r MSG; do
@@ -164,12 +190,12 @@ while IFS= read -r MSG; do
   MSG_EPOCH="$(twilio_date_to_epoch "$DATE_SENT_STR")"
 
   # Skip messages at or before last poll time
-  if [ "$MSG_EPOCH" -le "$LAST_POLL_EPOCH" ]; then
+  if [ "$MSG_EPOCH" -lt "$LAST_POLL_EPOCH" ]; then
     continue
   fi
 
   # Skip if same SID as last processed (dedup for messages at exact last_poll boundary)
-  if [ "$SID" = "$LAST_SID" ]; then
+  if [ "$MSG_EPOCH" -eq "$LAST_POLL_EPOCH" ] && [ "$SID" = "$LAST_SID" ]; then
     continue
   fi
 
@@ -180,7 +206,7 @@ while IFS= read -r MSG; do
   FROM="$(echo "$MSG" | jq -r '.from' | sed 's/whatsapp://')"
   BODY="$(echo "$MSG" | jq -r '.body // ""')"
   # Convert Twilio RFC 2822 to ISO-8601
-  TIMESTAMP="$(date -jf "%a, %d %b %Y %H:%M:%S %z" "$DATE_SENT_STR" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "$DATE_SENT_STR")"
+  TIMESTAMP="$(date -u -jf "%a, %d %b %Y %H:%M:%S %z" "$DATE_SENT_STR" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "$DATE_SENT_STR")"
 
   jq -nc \
     --arg from "$FROM" \
@@ -198,12 +224,18 @@ while IFS= read -r MSG; do
   if [ "$MSG_EPOCH" -gt "$NEWEST_EPOCH" ]; then
     NEWEST_EPOCH="$MSG_EPOCH"
     NEWEST_SID="$SID"
+    NEWEST_TIMESTAMP="$TIMESTAMP"
   fi
 
 done < <(echo "$RESPONSE" | jq -c '.messages[]')
 
-# Save state (update SID if we saw new messages)
-save_state "$NEWEST_SID"
+STATE_CURSOR="$LAST_POLL"
+if [ "$NEW_COUNT" -gt 0 ] && [ -n "$NEWEST_TIMESTAMP" ]; then
+  STATE_CURSOR="$NEWEST_TIMESTAMP"
+fi
+
+# Save state (only advance the cursor when we actually ingest a newer message)
+save_state "$NEWEST_SID" "$STATE_CURSOR"
 
 if [ "$NEW_COUNT" -gt 0 ]; then
   echo "$(date -Iseconds) OK: $NEW_COUNT new inbound message(s) (${TOTAL} total fetched, newest SID=$NEWEST_SID)" >> "$LOG_FILE"
