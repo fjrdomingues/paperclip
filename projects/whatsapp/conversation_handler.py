@@ -53,12 +53,14 @@ PROJECT_ROOT = SCRIPT_DIR.parent.parent
 ENV_FILE = PROJECT_ROOT / "projects" / "telegram" / ".env"
 DATA_DIR = SCRIPT_DIR / "data"
 INBOX_FILE = DATA_DIR / "inbox.jsonl"
+TEMPLATES_FILE = SCRIPT_DIR / "templates.json"
 
 # Stages that are terminal — no further automated responses
 TERMINAL_STAGES = {"converted", "declined", "silent", "blacklisted", "opted_out"}
 
 # Stage ordering for A/B analysis logging
 STAGE_ORDER = ["opener_sent", "engaged", "qualified", "pitched", "converted", "declined", "silent", "blacklisted"]
+WARM_LEAD_STAGES = {"interested", "demo_requested"}
 
 RATE_LIMIT_DELAY = 2.0  # seconds between Twilio sends
 SILENCE_HOURS = 48  # hours of no inbound before marking silent
@@ -82,13 +84,58 @@ OPENER_BODIES = {
     ),
 }
 
+LEGACY_OUTREACH_CONTEXTS = {
+    "remodelar_agentes_outreach": (
+        "A mensagem inicial ja apresentou a Remodelar AI, explicou que fazemos home staging virtual "
+        "com IA e ofereceu 10 fotos gratuitas se o agente enviar uma foto de um imovel."
+    ),
+}
+
+AUTO_RESPONDER_PATTERNS = (
+    "o seu contato é muito importante para nós",
+    "o seu contacto é muito importante para nós",
+    "de momento, estamos ausentes",
+    "de momento estou ausente",
+    "não estou disponível de momento",
+    "nao estou disponivel de momento",
+    "não estou disponível",
+    "nao estou disponivel",
+    "responderei à sua mensagem o mais breve possível",
+    "responderei a sua mensagem o mais breve possível",
+    "responderei assim que possível",
+    "responderei assim que possivel",
+    "entrarei em contacto consigo assim que estiver disponível",
+    "estarei à sua disposição",
+    "respondemos com a maior brevidade possível",
+)
+
+
+def _load_template_bodies():
+    if not TEMPLATES_FILE.exists():
+        return {}
+    try:
+        with open(TEMPLATES_FILE) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {
+        item.get("name"): item.get("body", "")
+        for item in data.get("templates", [])
+        if item.get("name")
+    }
+
+
+TEMPLATE_BODY_BY_NAME = _load_template_bodies()
+
 SYSTEM_PROMPT = """Você é um assistente a gerir conversas de WhatsApp para a Remodelar AI,
 uma empresa de home staging virtual com IA que serve agentes imobiliários em Portugal.
 
 O objetivo é construir uma conversa genuína com o agente antes de apresentar o produto.
 
 REGRAS ABSOLUTAS:
-1. NUNCA mencione "Remodelar", staging virtual, IA ou preços antes do stage "qualified".
+1. Respeite o tipo de abordagem indicado no prompt do utilizador:
+   - conversation_first: NUNCA mencione "Remodelar", staging virtual, IA ou preços antes do stage "qualified".
+   - legacy_outreach: a primeira mensagem ja apresentou a Remodelar AI; responda diretamente ao pedido do agente sem repetir um pitch agressivo.
 2. Máximo 3-4 linhas por mensagem. Seja conciso.
 3. Escreva em Português Europeu (PT-PT). Use "você" para tratar o agente.
 4. Máximo 1 emoji por mensagem. Prefira zero emojis.
@@ -236,23 +283,39 @@ def send_free_text(account_sid, api_key_sid, api_key_secret, from_number, to_num
         return json.loads(raw) if raw else {"error_message": str(e), "status": "failed"}
 
 
-def build_conversation_prompt(lead_name, lead_city, variant, history, new_inbound_body):
+def build_conversation_prompt(
+    lead_name,
+    lead_city,
+    variant,
+    history,
+    new_inbound_body,
+    *,
+    approach_mode="conversation_first",
+    campaign_context=None,
+):
     """Build the user-turn prompt for Claude."""
     opener = OPENER_BODIES.get(variant, "").format(name=lead_name or "agente", city=lead_city or "Portugal")
 
     lines = [
         f"Conversa com agente: {lead_name or 'desconhecido'} ({lead_city or 'Portugal'})",
+        f"Tipo de abordagem: {approach_mode}",
         f"Variante do opener: {variant or 'desconhecida'}",
         "",
         "=== HISTÓRICO DA CONVERSA ===",
     ]
+
+    if campaign_context:
+        lines.append(f"[CONTEXTO DE CAMPANHA] {campaign_context}")
 
     if opener and not history:
         lines.append(f"[OUTBOUND - opener] {opener}")
 
     for ex in history:
         direction = "OUTBOUND" if ex["direction"] == "outbound" else "INBOUND"
-        lines.append(f"[{direction}] {ex['body']}")
+        body = ex.get("body") or ""
+        if direction == "OUTBOUND":
+            body = TEMPLATE_BODY_BY_NAME.get(body, body)
+        lines.append(f"[{direction}] {body}")
 
     lines.append(f"[INBOUND - nova mensagem] {new_inbound_body}")
     lines.append("")
@@ -261,9 +324,28 @@ def build_conversation_prompt(lead_name, lead_city, variant, history, new_inboun
     return "\n".join(lines)
 
 
-def classify_and_respond(client, lead_name, lead_city, variant, history, new_inbound_body, dry_run=False):
+def classify_and_respond(
+    client,
+    lead_name,
+    lead_city,
+    variant,
+    history,
+    new_inbound_body,
+    dry_run=False,
+    *,
+    approach_mode="conversation_first",
+    campaign_context=None,
+):
     """Call Claude to classify stage and generate response. Returns (new_stage, should_respond, response_text)."""
-    user_prompt = build_conversation_prompt(lead_name, lead_city, variant, history, new_inbound_body)
+    user_prompt = build_conversation_prompt(
+        lead_name,
+        lead_city,
+        variant,
+        history,
+        new_inbound_body,
+        approach_mode=approach_mode,
+        campaign_context=campaign_context,
+    )
 
     if dry_run:
         print(f"    [DRY RUN] Would call Claude with prompt ({len(user_prompt)} chars)")
@@ -297,6 +379,57 @@ def classify_and_respond(client, lead_name, lead_city, variant, history, new_inb
     except Exception as e:
         print(f"    ERROR calling Claude: {e}")
         return "engaged", False, None
+
+
+def _get_processing_context(db, phone, current_stage):
+    """Return the approach metadata for an eligible phone, or None when it should be skipped."""
+    variant = whatsapp_db.get_opener_variant(db, phone)
+    latest_outreach = whatsapp_db.get_latest_outreach_message(db, phone)
+    latest_template = latest_outreach["template_name"] if latest_outreach else None
+    exchange_count = whatsapp_db.get_exchange_count(db, phone)
+
+    if variant:
+        return {
+            "approach_mode": "conversation_first",
+            "variant": variant,
+            "campaign_context": None,
+        }
+
+    if latest_template in LEGACY_OUTREACH_CONTEXTS and (
+        current_stage in WARM_LEAD_STAGES or exchange_count > 0
+    ):
+        return {
+            "approach_mode": "legacy_outreach",
+            "variant": "legacy_outreach",
+            "campaign_context": LEGACY_OUTREACH_CONTEXTS[latest_template],
+        }
+
+    return None
+
+
+def _get_history_for_prompt(db, phone, pending_sids):
+    """Prefer conversation-specific history; fall back to raw pipeline transcript when needed."""
+    history = whatsapp_db.get_conversation_history(db, phone)
+    if history:
+        return history
+
+    pending_sid_set = {sid for sid in pending_sids if sid}
+    fallback_history = []
+    for msg in whatsapp_db.get_messages_for_phone(db, phone):
+        twilio_sid = msg.get("twilio_sid")
+        if msg.get("direction") == "inbound" and twilio_sid and twilio_sid in pending_sid_set:
+            continue
+        fallback_history.append(msg)
+    return fallback_history
+
+
+def _is_probable_auto_responder(body):
+    """Heuristic guard for obvious away messages / auto-replies."""
+    if not body:
+        return False
+    normalized = " ".join(body.lower().split())
+    matches = sum(1 for pattern in AUTO_RESPONDER_PATTERNS if pattern in normalized)
+    return matches >= 2
 
 
 def check_silence(db, dry_run=False):
@@ -370,77 +503,115 @@ def process_phone(db, phone, inbound_messages, client, twilio_creds, dry_run=Fal
     lead_name = lead["name"] if lead else "agente"
     lead_city = lead["city"] if lead else "Portugal"
 
-    variant = whatsapp_db.get_opener_variant(db, phone)
-    if not variant:
-        # Not a conversation-first lead
-        return 0
-
     stage_row = whatsapp_db.get_contact_stage(db, phone)
     current_stage = stage_row["stage"] if stage_row else "opener_sent"
+    context = _get_processing_context(db, phone, current_stage)
+    if not context:
+        return 0
 
     if current_stage in TERMINAL_STAGES:
         return 0
 
     first_name = lead_name.split()[0] if lead_name and lead_name.strip() else "agente"
 
-    processed = 0
+    pending_messages = []
     for msg in sorted(inbound_messages, key=lambda m: m.get("timestamp", "")):
         sid = msg.get("sid", "")
         body = msg.get("body", "").strip()
-        received_at = msg.get("timestamp", now_utc().isoformat())
 
         if not body:
             continue
 
-        # Skip already-processed messages
         if sid and whatsapp_db.has_processed_inbound(db, phone, sid):
             continue
 
-        print(f"  Processing reply from {first_name} ({phone}): '{body[:60]}'")
+        pending_messages.append(msg)
 
-        # Get conversation history so far
-        history = whatsapp_db.get_conversation_history(db, phone)
+    if not pending_messages:
+        return 0
 
-        # Call LLM
-        new_stage, should_respond, response_text = classify_and_respond(
-            client, first_name, lead_city, variant, history, body, dry_run=dry_run
-        )
+    combined_body = "\n".join(msg.get("body", "").strip() for msg in pending_messages if msg.get("body", "").strip())
+    pending_sids = [msg.get("sid", "") for msg in pending_messages]
+    latest_body = pending_messages[-1].get("body", "").strip()
+    latest_received_at = pending_messages[-1].get("timestamp", now_utc().isoformat())
 
-        # Log the inbound exchange
+    if _is_probable_auto_responder(latest_body):
+        print(f"  Skipping probable auto-responder from {first_name} ({phone})")
         if not dry_run:
+            for msg in pending_messages:
+                whatsapp_db.add_conversation_exchange(
+                    db,
+                    phone,
+                    "inbound",
+                    msg.get("body", "").strip(),
+                    msg.get("sid", ""),
+                    current_stage,
+                    context["variant"],
+                    msg.get("timestamp", latest_received_at),
+                )
+            db.commit()
+        return len(pending_messages)
+
+    print(
+        f"  Processing {len(pending_messages)} new message(s) from {first_name} ({phone}): "
+        f"'{latest_body[:60]}'"
+    )
+
+    history = _get_history_for_prompt(db, phone, pending_sids)
+    new_stage, should_respond, response_text = classify_and_respond(
+        client,
+        first_name,
+        lead_city,
+        context["variant"],
+        history,
+        combined_body,
+        dry_run=dry_run,
+        approach_mode=context["approach_mode"],
+        campaign_context=context["campaign_context"],
+    )
+
+    if not dry_run:
+        for msg in pending_messages:
             whatsapp_db.add_conversation_exchange(
-                db, phone, "inbound", body, sid, current_stage, variant, received_at
+                db,
+                phone,
+                "inbound",
+                msg.get("body", "").strip(),
+                msg.get("sid", ""),
+                current_stage,
+                context["variant"],
+                msg.get("timestamp", latest_received_at),
             )
+        db.commit()
+
+    if new_stage != current_stage:
+        print(f"    Stage transition: {current_stage} → {new_stage}")
+        if not dry_run:
+            whatsapp_db.update_contact_stage(db, phone, new_stage, classified_by="conversation_handler")
             db.commit()
 
-        # Update contact stage
-        if new_stage != current_stage:
-            print(f"    Stage transition: {current_stage} → {new_stage}")
-            if not dry_run:
-                whatsapp_db.update_contact_stage(db, phone, new_stage, classified_by="conversation_handler")
-                db.commit()
+    current_stage = new_stage
 
-        current_stage = new_stage
+    if current_stage in ("blacklisted", "opted_out"):
+        print(f"    → Adding to DNC (reason: {current_stage})")
+        if not dry_run:
+            _add_to_dnc(phone, lead_name, lead["agency"] if lead else "", current_stage, combined_body)
+        return len(pending_messages)
 
-        # Handle blacklist / opted_out — add to DNC
-        if current_stage in ("blacklisted", "opted_out"):
-            print(f"    → Adding to DNC (reason: {current_stage})")
-            if not dry_run:
-                _add_to_dnc(phone, lead_name, lead["agency"] if lead else "", current_stage, body)
-            processed += 1
-            break  # no more messages from this contact
+    if should_respond and response_text:
+        _send_response(
+            db,
+            phone,
+            lead_name,
+            context["variant"],
+            current_stage,
+            response_text,
+            twilio_creds,
+            dry_run=dry_run,
+        )
+        time.sleep(RATE_LIMIT_DELAY)
 
-        # Send response if warranted
-        if should_respond and response_text:
-            _send_response(
-                db, phone, lead_name, variant, current_stage, response_text,
-                twilio_creds, dry_run=dry_run
-            )
-            time.sleep(RATE_LIMIT_DELAY)
-
-        processed += 1
-
-    return processed
+    return len(pending_messages)
 
 
 def _send_response(db, phone, lead_name, variant, stage, response_text, twilio_creds, dry_run=False):
@@ -534,11 +705,10 @@ def main():
     for phone in phones_to_process:
         messages = inbox[phone]
 
-        if not whatsapp_db.is_conversation_lead(db, phone):
+        n = process_phone(db, phone, messages, client, twilio_creds, dry_run=args.dry_run)
+        if n == 0:
             stats["skipped"] += 1
             continue
-
-        n = process_phone(db, phone, messages, client, twilio_creds, dry_run=args.dry_run)
         stats["processed"] += n
 
     db.close()

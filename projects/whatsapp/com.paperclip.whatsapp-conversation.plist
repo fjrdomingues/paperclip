@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.paperclip.whatsapp-conversation</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/fabiodomingues/miniconda3/bin/python3</string>
+        <string>/Users/fabiodomingues/Desktop/Projects/paperclip/projects/whatsapp/run-conversation.py</string>
+        <string>--check-silence</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/fabiodomingues/Desktop/Projects/paperclip/projects/whatsapp</string>
+    <key>StartInterval</key>
+    <integer>120</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/fabiodomingues/.paperclip/logs/whatsapp-conversation-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/fabiodomingues/.paperclip/logs/whatsapp-conversation-stderr.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/fabiodomingues</string>
+        <key>PATH</key>
+        <string>/Users/fabiodomingues/miniconda3/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

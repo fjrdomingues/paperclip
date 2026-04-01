@@ -35,6 +35,8 @@ fi
 WHATSAPP_TO="${TWILIO_WHATSAPP_FROM:-whatsapp:+351912508220}"
 # URL-encode for Twilio API query parameter (: → %3A, + → %2B)
 WHATSAPP_TO_ENCODED="$(echo "$WHATSAPP_TO" | sed 's/:/%3A/g; s/+/%2B/g')"
+TWILIO_API_BASE="https://api.twilio.com"
+MAX_RECOVERY_PAGES="${WHATSAPP_POLL_MAX_RECOVERY_PAGES:-100}"
 
 # --- Log rotation ---
 LOG_MAX_LINES=1000
@@ -132,14 +134,81 @@ mark_sid_seen() {
 }
 
 fetch_twilio_response() {
-  if [ -n "$MOCK_RESPONSE_FILE" ]; then
-    cat "$MOCK_RESPONSE_FILE"
-    return
+  local initial_url
+  local page_url
+  local page_number=1
+  local page_count=0
+  local response
+  local next_page_url=""
+  local aggregate_file
+
+  initial_url="${TWILIO_API_BASE}/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json?To=${WHATSAPP_TO_ENCODED}&PageSize=50&DateSent%3E%3D${DATE_FILTER}"
+  page_url="$initial_url"
+  aggregate_file="$(mktemp)"
+
+  while [ -n "$page_url" ]; do
+    if [ -n "$MOCK_RESPONSE_FILE" ]; then
+      if [ -d "$MOCK_RESPONSE_FILE" ]; then
+        local mock_page_file
+        mock_page_file="$MOCK_RESPONSE_FILE/page-${page_number}.json"
+        if [ ! -f "$mock_page_file" ]; then
+          rm -f "$aggregate_file"
+          echo "$(date -Iseconds) ERROR: Missing mock Twilio response page $page_number at $mock_page_file" >> "$LOG_FILE"
+          return 1
+        fi
+        response="$(cat "$mock_page_file")"
+      else
+        response="$(cat "$MOCK_RESPONSE_FILE")"
+      fi
+    else
+      response="$(curl -fsS --max-time 30 \
+        -u "${TWILIO_API_KEY_SID}:${TWILIO_API_KEY_SECRET}" \
+        "$page_url")"
+    fi
+
+    if ! echo "$response" | jq -e '.messages' > /dev/null 2>&1; then
+      rm -f "$aggregate_file"
+      echo "$response"
+      return 0
+    fi
+
+    printf '%s\n' "$response" >> "$aggregate_file"
+    page_count=$((page_count + 1))
+
+    if [ -z "$LAST_SID" ] || echo "$response" | jq -e --arg sid "$LAST_SID" '.messages[]? | select(.sid == $sid)' > /dev/null 2>&1; then
+      break
+    fi
+
+    next_page_url="$(echo "$response" | jq -r '.next_page_uri // empty')"
+    if [ -z "$next_page_url" ]; then
+      break
+    fi
+
+    if [ "$page_count" -ge "$MAX_RECOVERY_PAGES" ]; then
+      echo "$(date -Iseconds) WARN: stopping Twilio recovery pagination after $page_count pages without finding anchor SID $LAST_SID" >> "$LOG_FILE"
+      break
+    fi
+
+    case "$next_page_url" in
+      http://*|https://*)
+        page_url="$next_page_url"
+        ;;
+      /*)
+        page_url="${TWILIO_API_BASE}${next_page_url}"
+        ;;
+      *)
+        page_url="${TWILIO_API_BASE}/${next_page_url}"
+        ;;
+    esac
+    page_number=$((page_number + 1))
+  done
+
+  if [ "$page_count" -gt 1 ] && [ -n "$LAST_SID" ]; then
+    echo "$(date -Iseconds) INFO: paged $page_count Twilio response(s) while recovering anchor SID $LAST_SID" >> "$LOG_FILE"
   fi
 
-  curl -fsS --max-time 30 \
-    -u "${TWILIO_API_KEY_SID}:${TWILIO_API_KEY_SECRET}" \
-    "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json?To=${WHATSAPP_TO_ENCODED}&PageSize=50&DateSent%3E%3D${DATE_FILTER}"
+  jq -cs '{messages: [.[].messages[]?]}' "$aggregate_file"
+  rm -f "$aggregate_file"
 }
 
 # --- Main ---

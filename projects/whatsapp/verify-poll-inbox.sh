@@ -47,23 +47,31 @@ PY
 
 run_poller() {
   local case_dir="$1"
+  local mock_response_path="$case_dir/response.json"
+  if [ -d "$case_dir/response-pages" ]; then
+    mock_response_path="$case_dir/response-pages"
+  fi
   TWILIO_ACCOUNT_SID=test-account \
   TWILIO_API_KEY_SID=test-key \
   TWILIO_API_KEY_SECRET=test-secret \
   WHATSAPP_POLL_DATA_DIR="$case_dir/data" \
   WHATSAPP_POLL_LOG_FILE="$case_dir/data/poll.log" \
-  WHATSAPP_POLL_MOCK_RESPONSE_FILE="$case_dir/response.json" \
+  WHATSAPP_POLL_MOCK_RESPONSE_FILE="$mock_response_path" \
   "$POLLER"
 }
 
 run_wrapper() {
   local case_dir="$1"
+  local mock_response_path="$case_dir/response.json"
+  if [ -d "$case_dir/response-pages" ]; then
+    mock_response_path="$case_dir/response-pages"
+  fi
   TWILIO_ACCOUNT_SID=test-account \
   TWILIO_API_KEY_SID=test-key \
   TWILIO_API_KEY_SECRET=test-secret \
   WHATSAPP_POLL_DATA_DIR="$case_dir/data" \
   WHATSAPP_POLL_LOG_FILE="$case_dir/data/poll.log" \
-  WHATSAPP_POLL_MOCK_RESPONSE_FILE="$case_dir/response.json" \
+  WHATSAPP_POLL_MOCK_RESPONSE_FILE="$mock_response_path" \
   WHATSAPP_DB_PATH="$case_dir/data/whatsapp.db" \
   python3 "$RUN_POLL"
 }
@@ -250,6 +258,64 @@ assert_eq "$(count_sid_occurrences "$CASE3_DIR" "SMsame-second")" "1" "same-seco
 assert_eq "$(count_sid_occurrences "$CASE3_DIR" "SMlate")" "1" "late-visible inbound is recovered after cursor clamp"
 assert_eq "$(state_field "$CASE3_DIR" "last_message_sid")" "SMlate" "state tracks the newest recovered SID"
 assert_eq "$(state_field "$CASE3_DIR" "last_poll")" "2026-03-31T11:22:51Z" "cursor advances to the newest ingested timestamp"
+
+printf "\nPaginated anchor recovery\n"
+CASE4_DIR="$TMP_DIR/case4"
+mkdir -p "$CASE4_DIR/data" "$CASE4_DIR/response-pages"
+jq -nc \
+  --arg from "+351918416952" \
+  --arg body "already stored anchor" \
+  --arg timestamp "2026-03-31T10:00:00Z" \
+  --arg sid "SMpage-anchor" \
+  --arg status "received" \
+  '{from: $from, body: $body, timestamp: $timestamp, sid: $sid, status: $status}' \
+  > "$CASE4_DIR/data/inbox.jsonl"
+jq -n \
+  --arg last_message_sid "SMpage-anchor" \
+  --arg last_poll "2026-03-31T14:00:00Z" \
+  '{"last_message_sid": $last_message_sid, "last_poll": $last_poll}' > "$CASE4_DIR/data/state.json"
+cat > "$CASE4_DIR/response-pages/page-1.json" <<'JSON'
+{
+  "messages": [
+    {
+      "sid": "SMpage-same-second",
+      "direction": "inbound",
+      "date_sent": "Tue, 31 Mar 2026 10:00:00 +0000",
+      "from": "whatsapp:+351918416953",
+      "body": "same-second unseen message"
+    },
+    {
+      "sid": "SMpage-late",
+      "direction": "inbound",
+      "date_sent": "Tue, 31 Mar 2026 10:05:00 +0000",
+      "from": "whatsapp:+351918416954",
+      "body": "later message on newest page"
+    }
+  ],
+  "next_page_uri": "/2010-04-01/Accounts/test-account/Messages.json?PageToken=page2"
+}
+JSON
+cat > "$CASE4_DIR/response-pages/page-2.json" <<'JSON'
+{
+  "messages": [
+    {
+      "sid": "SMpage-anchor",
+      "direction": "inbound",
+      "date_sent": "Tue, 31 Mar 2026 10:00:00 +0000",
+      "from": "whatsapp:+351918416952",
+      "body": "already stored anchor"
+    }
+  ],
+  "next_page_uri": null
+}
+JSON
+
+run_poller "$CASE4_DIR"
+assert_eq "$(count_sid_occurrences "$CASE4_DIR" "SMpage-anchor")" "1" "anchor SID is not re-appended when it only appears on a later page"
+assert_eq "$(count_sid_occurrences "$CASE4_DIR" "SMpage-same-second")" "1" "same-second unseen SID is recovered across Twilio pages"
+assert_eq "$(count_sid_occurrences "$CASE4_DIR" "SMpage-late")" "1" "newer inbound message is recovered across Twilio pages"
+assert_eq "$(state_field "$CASE4_DIR" "last_message_sid")" "SMpage-late" "paginated recovery keeps newest SID in state"
+assert_eq "$(state_field "$CASE4_DIR" "last_poll")" "2026-03-31T10:05:00Z" "paginated recovery clamps and advances the cursor"
 
 printf "\nSQLite sync\n"
 run_wrapper "$CASE2_DIR"

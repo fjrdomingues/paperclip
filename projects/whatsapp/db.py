@@ -366,6 +366,18 @@ def get_messages_for_phone(db, phone):
     return [dict(r) for r in rows]
 
 
+def get_latest_outreach_message(db, phone):
+    """Return the most recent outbound outreach row for a phone or None."""
+    return db.execute(
+        """SELECT phone, template_name, twilio_sid, status, sent_at
+           FROM outreach_messages
+           WHERE phone = ? AND status = 'sent'
+           ORDER BY sent_at DESC
+           LIMIT 1""",
+        (phone,),
+    ).fetchone()
+
+
 def get_daily_stats(db, days=30):
     """Return daily sent/failed counts for the last N days."""
     rows = db.execute(
