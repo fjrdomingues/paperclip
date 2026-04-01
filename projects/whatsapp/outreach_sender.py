@@ -63,7 +63,29 @@ SENDER_STATE_FILE = SCRIPT_DIR / "data" / "sender_state.json"
 # Error codes that indicate Meta rate-limiting / spam blocking
 RATE_LIMIT_ERROR_CODES = {63112, 63114, 63116, 21611}
 
-SENT_LOG_FIELDS = ["phone", "name", "agency", "template_name", "template_sid", "variant", "sent_at", "twilio_sid", "status", "error"]
+LEGACY_SENT_LOG_FIELDS = [
+    "phone",
+    "name",
+    "agency",
+    "template_name",
+    "template_sid",
+    "sent_at",
+    "twilio_sid",
+    "status",
+    "error",
+]
+SENT_LOG_FIELDS = [
+    "phone",
+    "name",
+    "agency",
+    "template_name",
+    "template_sid",
+    "variant",
+    "sent_at",
+    "twilio_sid",
+    "status",
+    "error",
+]
 
 # Conversation-first templates (A/B/C rotation) — WIN-314
 CONVERSA_TEMPLATES = [
@@ -106,23 +128,102 @@ def load_templates():
     return {t["name"]: t for t in data["templates"]}
 
 
-def load_sent_log():
-    """Return set of phones already sent to (successfully) for today's date."""
-    sent = {}  # phone -> list of dicts
-    if not SENT_LOG_FILE.exists():
-        return sent
-    with open(SENT_LOG_FILE, newline="") as f:
-        reader = csv.DictReader(f)
+def _empty_sent_log_entry():
+    return {field: "" for field in SENT_LOG_FIELDS}
+
+
+def _normalize_sent_log_entry(entry):
+    normalized = _empty_sent_log_entry()
+    for field in SENT_LOG_FIELDS:
+        normalized[field] = (entry.get(field, "") or "").strip()
+    return normalized
+
+
+def _parse_sent_log_row(row, header_fields):
+    if not row or not any((value or "").strip() for value in row):
+        return None, False
+
+    header_fields = [field.strip() for field in header_fields]
+    header_is_current = header_fields == SENT_LOG_FIELDS
+    normalized = _empty_sent_log_entry()
+    needs_repair = not header_is_current
+
+    if header_is_current:
+        for field, value in zip(header_fields, row):
+            normalized[field] = (value or "").strip()
+        if len(row) < len(SENT_LOG_FIELDS):
+            needs_repair = True
+        elif len(row) > len(SENT_LOG_FIELDS):
+            normalized["error"] = ",".join((value or "").strip() for value in row[len(SENT_LOG_FIELDS) - 1:])
+            needs_repair = True
+        return normalized, needs_repair
+
+    if len(row) >= len(SENT_LOG_FIELDS):
+        for field, value in zip(SENT_LOG_FIELDS, row):
+            normalized[field] = (value or "").strip()
+        if len(row) > len(SENT_LOG_FIELDS):
+            normalized["error"] = ",".join((value or "").strip() for value in row[len(SENT_LOG_FIELDS) - 1:])
+        return normalized, True
+
+    for field, value in zip(LEGACY_SENT_LOG_FIELDS, row):
+        normalized[field] = (value or "").strip()
+    return normalized, True
+
+
+def _read_sent_log_rows(sent_log_file=SENT_LOG_FILE):
+    if not sent_log_file.exists():
+        return [], False
+
+    with open(sent_log_file, newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
+            return [], False
+
+        normalized_header = [field.strip() for field in header]
+        entries = []
+        needs_repair = normalized_header != SENT_LOG_FIELDS
         for row in reader:
-            phone = row["phone"]
-            if phone not in sent:
-                sent[phone] = []
-            sent[phone].append(row)
+            entry, row_needs_repair = _parse_sent_log_row(row, normalized_header)
+            if entry is None:
+                continue
+            entries.append(entry)
+            needs_repair = needs_repair or row_needs_repair
+    return entries, needs_repair
+
+
+def _rewrite_sent_log(entries, sent_log_file=SENT_LOG_FILE):
+    sent_log_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = sent_log_file.with_suffix(sent_log_file.suffix + ".tmp")
+    with open(tmp_file, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=SENT_LOG_FIELDS)
+        writer.writeheader()
+        for entry in entries:
+            writer.writerow(_normalize_sent_log_entry(entry))
+    tmp_file.replace(sent_log_file)
+
+
+def ensure_sent_log_canonical(sent_log_file=SENT_LOG_FILE):
+    entries, needs_repair = _read_sent_log_rows(sent_log_file)
+    if sent_log_file.exists() and needs_repair:
+        _rewrite_sent_log(entries, sent_log_file)
+    return entries
+
+
+def load_sent_log(sent_log_file=SENT_LOG_FILE):
+    """Return sent-log entries keyed by phone, across legacy and current CSV schemas."""
+    sent = {}
+    entries, _needs_repair = _read_sent_log_rows(sent_log_file)
+    for row in entries:
+        phone = row.get("phone", "")
+        if not phone:
+            continue
+        sent.setdefault(phone, []).append(row)
     return sent
 
 
-def count_sent_today(sent_log):
-    today = date.today().isoformat()
+def count_sent_today(sent_log, today=None):
+    today = today or date.today().isoformat()
     count = 0
     for entries in sent_log.values():
         for e in entries:
@@ -131,10 +232,13 @@ def count_sent_today(sent_log):
     return count
 
 
-def append_sent_log(entry):
-    SENT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    file_exists = SENT_LOG_FILE.exists()
-    with open(SENT_LOG_FILE, "a", newline="") as f:
+def append_sent_log(entry, sent_log_file=SENT_LOG_FILE):
+    entry = _normalize_sent_log_entry(entry)
+    if sent_log_file.exists():
+        ensure_sent_log_canonical(sent_log_file)
+    sent_log_file.parent.mkdir(parents=True, exist_ok=True)
+    file_exists = sent_log_file.exists()
+    with open(sent_log_file, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=SENT_LOG_FIELDS)
         if not file_exists:
             writer.writeheader()
