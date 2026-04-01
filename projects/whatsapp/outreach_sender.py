@@ -63,6 +63,9 @@ SENDER_STATE_FILE = SCRIPT_DIR / "data" / "sender_state.json"
 # Error codes that indicate Meta rate-limiting / spam blocking
 RATE_LIMIT_ERROR_CODES = {63112, 63114, 63116, 21611}
 
+# Max failed attempts per contact per day before skipping to the next contact (WIN-332)
+MAX_FAILURES_PER_CONTACT = 3
+
 LEGACY_SENT_LOG_FIELDS = [
     "phone",
     "name",
@@ -746,6 +749,10 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
             continue
         if not phone.startswith("+"):
             phone = "+" + phone.lstrip("0")
+        # Skip invalid phones (e.g. all-zeros normalize to "+") — WIN-332
+        if not any(c.isdigit() for c in phone):
+            print(f"  SKIP (invalid phone): {lead.get('name', '')} — '{phone}'")
+            continue
         if phone in sent_log:
             if args.personalized:
                 # In personalized mode, skip if any outreach template was sent
@@ -759,6 +766,14 @@ def run_one_shot(args, account_sid, api_key_sid, api_key_secret, from_number, te
                     for e in sent_log[phone]
                 )
             if already_sent:
+                continue
+            # Skip if max failures reached today — WIN-332
+            today_str = date.today().isoformat()
+            failures_today = sum(
+                1 for e in sent_log[phone]
+                if e.get("sent_at", "").startswith(today_str) and e.get("status") == "failed"
+            )
+            if failures_today >= MAX_FAILURES_PER_CONTACT:
                 continue
         target_lead = {**lead, "phone": phone}
         break
@@ -953,6 +968,12 @@ def main():
         if not phone.startswith("+"):
             phone = "+" + phone.lstrip("0")
 
+        # Skip invalid phones (e.g. all-zeros normalize to "+") — WIN-332
+        if not any(c.isdigit() for c in phone):
+            print(f"  SKIP (invalid phone): {name} — '{phone}'")
+            skipped_count += 1
+            continue
+
         # Skip if already sent outreach to this phone
         if phone in sent_log:
             if args.personalized:
@@ -967,6 +988,16 @@ def main():
                 )
             if already_sent:
                 print(f"  SKIP (already sent): {name} {phone}")
+                skipped_count += 1
+                continue
+            # Skip if max failures reached today — WIN-332
+            today_str = date.today().isoformat()
+            failures_today = sum(
+                1 for e in sent_log[phone]
+                if e.get("sent_at", "").startswith(today_str) and e.get("status") == "failed"
+            )
+            if failures_today >= MAX_FAILURES_PER_CONTACT:
+                print(f"  SKIP (max failures {failures_today}/{MAX_FAILURES_PER_CONTACT} today): {name} {phone}")
                 skipped_count += 1
                 continue
 
