@@ -154,8 +154,14 @@ check_freshness() {
     fi
     local sample=""
     local sample_epoch=0
-    if [ "$source_mode" = "json_last_poll" ]; then
-        sample="$(jq -r '.last_poll // empty' "$filepath" 2>/dev/null || true)"
+    if [ "$source_mode" = "json_last_poll" ] || [ "$source_mode" = "json_last_run" ]; then
+        if [ "$source_mode" = "json_last_run" ]; then
+            # Prefer last_run (poll execution time); fall back to last_poll for
+            # backward compat with state.json written before last_run was introduced.
+            sample="$(jq -r '.last_run // .last_poll // empty' "$filepath" 2>/dev/null || true)"
+        else
+            sample="$(jq -r '.last_poll // empty' "$filepath" 2>/dev/null || true)"
+        fi
         if [ -z "$sample" ]; then
             FRESH_JSON+="\"$name\":{\"age_min\":null,\"ok\":false,\"error\":\"missing_last_poll\"}"
             HEALTHY=false
@@ -194,16 +200,17 @@ PY
         add_alert "Data: $name stale (${age_min}m)"
     fi
     FRESH_JSON+="\"$name\":{\"age_min\":$age_min,\"ok\":$ok,\"threshold_min\":$threshold_min"
-    if [ "$source_mode" = "json_last_poll" ]; then
+    if [ "$source_mode" = "json_last_poll" ] || [ "$source_mode" = "json_last_run" ]; then
         FRESH_JSON+=",\"last_poll\":$(json_escape "$sample")"
     fi
     FRESH_JSON+="}"
 }
 
-# Use state.json last_poll for pollers — it updates every poll cycle regardless
-# of whether new inbound messages arrived, so it measures poller liveness directly.
+# telegram_poll: uses last_poll (Telegram poller advances it on every cycle).
+# whatsapp_poll: uses last_run (poll execution time) with last_poll fallback — last_poll
+#   only advances when a new inbound message arrives, so it is not a reliable liveness signal.
 check_freshness "telegram_poll" "$BASE_DIR/projects/telegram/data/state.json" "$TELEGRAM_POLL_STALE_THRESHOLD_MIN" "json_last_poll"
-check_freshness "whatsapp_poll" "$BASE_DIR/projects/whatsapp/data/state.json" "$WHATSAPP_POLL_STALE_THRESHOLD_MIN" "json_last_poll"
+check_freshness "whatsapp_poll" "$BASE_DIR/projects/whatsapp/data/state.json" "$WHATSAPP_POLL_STALE_THRESHOLD_MIN" "json_last_run"
 check_freshness "whatsapp_sync" "$BASE_DIR/projects/whatsapp/data/sync.log" "$WHATSAPP_SYNC_STALE_THRESHOLD_MIN" "mtime"
 FRESH_JSON+="}"
 

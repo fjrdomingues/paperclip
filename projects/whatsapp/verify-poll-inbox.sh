@@ -317,6 +317,26 @@ assert_eq "$(count_sid_occurrences "$CASE4_DIR" "SMpage-late")" "1" "newer inbou
 assert_eq "$(state_field "$CASE4_DIR" "last_message_sid")" "SMpage-late" "paginated recovery keeps newest SID in state"
 assert_eq "$(state_field "$CASE4_DIR" "last_poll")" "2026-03-31T10:05:00Z" "paginated recovery clamps and advances the cursor"
 
+printf "\nlast_run freshness signal\n"
+CASE5_DIR="$TMP_DIR/case5"
+mkdir -p "$CASE5_DIR/data"
+jq -n \
+  --arg last_message_sid "" \
+  --arg last_poll "2026-04-01T10:00:00Z" \
+  '{"last_message_sid": $last_message_sid, "last_poll": $last_poll}' > "$CASE5_DIR/data/state.json"
+cat > "$CASE5_DIR/response.json" <<'JSON'
+{"messages": []}
+JSON
+run_poller "$CASE5_DIR"
+LAST_RUN="$(state_field "$CASE5_DIR" "last_run")"
+if [ -n "$LAST_RUN" ]; then
+  pass "last_run is written on every successful poll cycle"
+else
+  fail "last_run missing from state.json after poll with no new messages"
+fi
+# last_poll must not advance when no new messages arrive
+assert_eq "$(state_field "$CASE5_DIR" "last_poll")" "2026-04-01T10:00:00Z" "last_poll cursor unchanged when no new messages"
+
 printf "\nSQLite sync\n"
 run_wrapper "$CASE2_DIR"
 DB_COUNT="$(python3 - "$CASE2_DIR/data/whatsapp.db" <<'PY'

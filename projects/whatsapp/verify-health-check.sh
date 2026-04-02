@@ -56,10 +56,12 @@ assert_log_contains() {
   fi
 }
 
-printf "\nHealthy path\n"
+printf "\nHealthy path — last_run present (primary)\n"
 rm -f "$DATA_DIR/health.log" "$DATA_DIR/health-state.json"
 RECENT_TS="$(iso_utc_from_epoch "$(( $(date +%s) - 120 ))")"
-jq -n --arg last_poll "$RECENT_TS" '{"last_poll": $last_poll}' > "$DATA_DIR/state.json"
+STALE_POLL_TS="$(iso_utc_from_epoch "$(( $(date +%s) - 3600 ))")"
+jq -n --arg last_run "$RECENT_TS" --arg last_poll "$STALE_POLL_TS" \
+  '{"last_run": $last_run, "last_poll": $last_poll}' > "$DATA_DIR/state.json"
 run_health_check
 assert_log_contains 'OK: poller healthy'
 if [ ! -f "$DATA_DIR/health-state.json" ]; then
@@ -73,10 +75,17 @@ else
   fi
 fi
 
-printf "\nStale path\n"
+printf "\nHealthy path — last_run absent (backward compat fallback to last_poll)\n"
+rm -f "$DATA_DIR/health.log" "$DATA_DIR/health-state.json"
+jq -n --arg last_poll "$RECENT_TS" '{"last_poll": $last_poll}' > "$DATA_DIR/state.json"
+run_health_check
+assert_log_contains 'OK: poller healthy'
+
+printf "\nStale path — stale last_run overrides fresh last_poll\n"
 rm -f "$DATA_DIR/health.log" "$DATA_DIR/health-state.json"
 STALE_TS="$(iso_utc_from_epoch "$(( $(date +%s) - 900 ))")"
-jq -n --arg last_poll "$STALE_TS" '{"last_poll": $last_poll}' > "$DATA_DIR/state.json"
+jq -n --arg last_run "$STALE_TS" --arg last_poll "$RECENT_TS" \
+  '{"last_run": $last_run, "last_poll": $last_poll}' > "$DATA_DIR/state.json"
 run_health_check
 assert_log_contains 'ALERT\(dry-run\): poller stale'
 if [ -f "$DATA_DIR/health-state.json" ]; then
@@ -89,6 +98,12 @@ if [ -f "$DATA_DIR/health-state.json" ]; then
 else
   fail "stale run did not create health-state.json"
 fi
+
+printf "\nStale path — fallback: last_run absent, stale last_poll\n"
+rm -f "$DATA_DIR/health.log" "$DATA_DIR/health-state.json"
+jq -n --arg last_poll "$STALE_TS" '{"last_poll": $last_poll}' > "$DATA_DIR/state.json"
+run_health_check
+assert_log_contains 'ALERT\(dry-run\): poller stale'
 
 printf "\nSummary: %d passed, %d failed\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

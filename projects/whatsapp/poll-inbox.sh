@@ -74,12 +74,15 @@ load_state() {
 save_state() {
   local sid="$1"
   local last_poll="$2"
+  local last_run
+  last_run="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   local tmp
   tmp="$(mktemp)"
   jq -n \
     --arg last_message_sid "$sid" \
     --arg last_poll "$last_poll" \
-    '{"last_message_sid": $last_message_sid, "last_poll": $last_poll}' > "$tmp"
+    --arg last_run "$last_run" \
+    '{"last_message_sid": $last_message_sid, "last_poll": $last_poll, "last_run": $last_run}' > "$tmp"
   mv "$tmp" "$STATE_FILE"
 }
 

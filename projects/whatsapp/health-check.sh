@@ -55,14 +55,21 @@ if [ ! -f "$STATE_FILE" ]; then
   exit 0
 fi
 
+# Use last_run (poll execution time) when available; fall back to last_poll for
+# backward compat with state.json files written before last_run was introduced.
+LAST_RUN="$(jq -r '.last_run // empty' "$STATE_FILE" 2>/dev/null || true)"
 LAST_POLL="$(jq -r '.last_poll // empty' "$STATE_FILE" 2>/dev/null || true)"
-if [ -z "$LAST_POLL" ]; then
-  echo "$(date -Iseconds) WARN: last_poll missing from state.json" >> "$LOG_FILE"
+FRESHNESS_TS="${LAST_RUN:-$LAST_POLL}"
+FRESHNESS_KEY="last_run"
+[ -z "$LAST_RUN" ] && FRESHNESS_KEY="last_poll"
+
+if [ -z "$FRESHNESS_TS" ]; then
+  echo "$(date -Iseconds) WARN: neither last_run nor last_poll found in state.json" >> "$LOG_FILE"
   exit 0
 fi
 
-LAST_POLL_EPOCH="$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$LAST_POLL" "+%s" 2>/dev/null)" || {
-  echo "$(date -Iseconds) ERROR: Could not parse last_poll timestamp: $LAST_POLL" >> "$LOG_FILE"
+LAST_POLL_EPOCH="$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$FRESHNESS_TS" "+%s" 2>/dev/null)" || {
+  echo "$(date -Iseconds) ERROR: Could not parse $FRESHNESS_KEY timestamp: $FRESHNESS_TS" >> "$LOG_FILE"
   exit 1
 }
 
@@ -110,7 +117,7 @@ else
     }
 fi
 
-jq -n --argjson ts "$NOW" --arg last_poll "$LAST_POLL" \
+jq -n --argjson ts "$NOW" --arg last_poll "$FRESHNESS_TS" \
   '{"last_alert": $ts, "last_stale_poll": $last_poll}' > "$HEALTH_STATE_FILE"
 
 if [ "$DRY_RUN" != "1" ]; then
