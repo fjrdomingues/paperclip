@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 WhatsApp Conversation Flow Handler (WIN-315)
-LLM-powered reply handler for conversation-first outreach.
+Classification-only handler for conversation-first outreach (WIN-330).
 
 Processes inbound replies from real estate agents who received a
 conversation-first opener (variants A/B/C from WIN-313). Classifies
-the conversation stage and generates contextual responses using Claude AI.
+the conversation stage using Claude AI and writes state transitions to DB.
+Does NOT send any WhatsApp messages — house-remodel-ai is the sole responder.
 
 State machine stages:
   opener_sent → engaged → qualified → pitched → converted / declined / silent
@@ -23,7 +24,6 @@ Usage:
   python conversation_handler.py [--dry-run] [--check-silence]
 
 Env vars (loaded from projects/telegram/.env):
-  TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, TWILIO_WHATSAPP_FROM
   ANTHROPIC_API_KEY
 """
 
@@ -31,19 +31,8 @@ import argparse
 import json
 import os
 import sys
-import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-import ssl
-import base64
-from urllib import request, parse
-from urllib.error import HTTPError
-
-try:
-    import certifi
-    _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
-except ImportError:
-    _SSL_CTX = ssl.create_default_context()
 
 import anthropic
 import db as whatsapp_db
@@ -62,7 +51,6 @@ TERMINAL_STAGES = {"converted", "declined", "silent", "blacklisted", "opted_out"
 STAGE_ORDER = ["opener_sent", "engaged", "qualified", "pitched", "converted", "declined", "silent", "blacklisted"]
 WARM_LEAD_STAGES = {"interested", "demo_requested"}
 
-RATE_LIMIT_DELAY = 2.0  # seconds between Twilio sends
 SILENCE_HOURS = 48  # hours of no inbound before marking silent
 
 # Variant → opener body map (for LLM context)
@@ -260,27 +248,6 @@ def load_inbox():
             except json.JSONDecodeError:
                 continue
     return messages
-
-
-def send_free_text(account_sid, api_key_sid, api_key_secret, from_number, to_number, body):
-    """Send a free-text WhatsApp message (within 24h conversation window)."""
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
-    to = f"whatsapp:{to_number}" if not to_number.startswith("whatsapp:") else to_number
-    data = parse.urlencode({
-        "From": from_number,
-        "To": to,
-        "Body": body,
-    }).encode()
-    req = request.Request(url, data=data, method="POST")
-    credentials = base64.b64encode(f"{api_key_sid}:{api_key_secret}".encode()).decode()
-    req.add_header("Authorization", f"Basic {credentials}")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    try:
-        with request.urlopen(req, context=_SSL_CTX) as resp:
-            return json.loads(resp.read())
-    except HTTPError as e:
-        raw = e.read().decode()
-        return json.loads(raw) if raw else {"error_message": str(e), "status": "failed"}
 
 
 def build_conversation_prompt(
@@ -497,7 +464,7 @@ def check_silence(db, dry_run=False):
     return silenced
 
 
-def process_phone(db, phone, inbound_messages, client, twilio_creds, dry_run=False):
+def process_phone(db, phone, inbound_messages, client, dry_run=False):
     """Process all new inbound messages for a single phone number."""
     lead = whatsapp_db.get_lead_by_phone(db, phone)
     lead_name = lead["name"] if lead else "agente"
@@ -598,43 +565,7 @@ def process_phone(db, phone, inbound_messages, client, twilio_creds, dry_run=Fal
             _add_to_dnc(phone, lead_name, lead["agency"] if lead else "", current_stage, combined_body)
         return len(pending_messages)
 
-    if should_respond and response_text:
-        _send_response(
-            db,
-            phone,
-            lead_name,
-            context["variant"],
-            current_stage,
-            response_text,
-            twilio_creds,
-            dry_run=dry_run,
-        )
-        time.sleep(RATE_LIMIT_DELAY)
-
     return len(pending_messages)
-
-
-def _send_response(db, phone, lead_name, variant, stage, response_text, twilio_creds, dry_run=False):
-    if dry_run:
-        print(f"    [DRY RUN] Would send: '{response_text[:80]}'")
-        return
-
-    account_sid, api_key_sid, api_key_secret, from_number = twilio_creds
-    print(f"    Sending response...", end=" ", flush=True)
-    resp = send_free_text(account_sid, api_key_sid, api_key_secret, from_number, phone, response_text)
-
-    sid = resp.get("sid", "")
-    status = resp.get("status", "")
-    error = resp.get("message") or resp.get("error_message") or ""
-
-    if status in ("queued", "sent"):
-        print(f"OK (SID: {sid})")
-        whatsapp_db.add_conversation_exchange(
-            db, phone, "outbound", response_text, sid, stage, variant, now_utc().isoformat()
-        )
-        db.commit()
-    else:
-        print(f"FAILED (status={status}, error={error})")
 
 
 def _add_to_dnc(phone, name, agency, reason, reply_body):
@@ -666,15 +597,6 @@ def main():
 
     load_env()
 
-    if not args.dry_run:
-        account_sid = require_env("TWILIO_ACCOUNT_SID")
-        api_key_sid = require_env("TWILIO_API_KEY_SID")
-        api_key_secret = require_env("TWILIO_API_KEY_SECRET")
-        from_number = require_env("TWILIO_WHATSAPP_FROM")
-        twilio_creds = (account_sid, api_key_sid, api_key_secret, from_number)
-    else:
-        twilio_creds = None
-
     if args.dry_run:
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "dry-run-placeholder")
     else:
@@ -683,7 +605,7 @@ def main():
 
     db = whatsapp_db.get_db()
 
-    stats = {"processed": 0, "responded": 0, "silenced": 0, "skipped": 0}
+    stats = {"processed": 0, "silenced": 0, "skipped": 0}
 
     if args.check_silence:
         print("=== Checking for silent leads ===")
@@ -705,7 +627,7 @@ def main():
     for phone in phones_to_process:
         messages = inbox[phone]
 
-        n = process_phone(db, phone, messages, client, twilio_creds, dry_run=args.dry_run)
+        n = process_phone(db, phone, messages, client, dry_run=args.dry_run)
         if n == 0:
             stats["skipped"] += 1
             continue
