@@ -12,15 +12,16 @@ LOG="$LOCAL_BASE/data/deploy.log"
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >> "$LOG"; }
 
-# Sync code files, capturing itemized changes to detect if anything updated
-CHANGES=$(/usr/bin/rsync -az --itemize-changes --timeout=30 \
+# Sync code files using checksum comparison (not mtime) to avoid false positives
+# from macOS/Linux filesystem timestamp precision differences.
+CHANGES=$(/usr/bin/rsync -az --checksum --itemize-changes --timeout=30 \
   "$LOCAL_BASE/viewer/app.py" \
   "$LOCAL_BASE/viewer/requirements.txt" \
   "$LOCAL_BASE/db.py" \
   "$SERVER:$REMOTE_APP/" 2>&1) || { log "ERROR: rsync app files failed"; exit 1; }
 
 # Sync template files individually (avoids macOS TCC opendir restriction)
-TMPL_CHANGES=$(/usr/bin/rsync -az --itemize-changes --timeout=30 \
+TMPL_CHANGES=$(/usr/bin/rsync -az --checksum --itemize-changes --timeout=30 \
   "$LOCAL_BASE/viewer/templates/index.html" \
   "$LOCAL_BASE/viewer/templates/dashboard.html" \
   "$SERVER:$REMOTE_APP/templates/" 2>&1) || { log "ERROR: rsync templates failed"; exit 1; }
@@ -36,7 +37,7 @@ log "code changes detected, rebuilding container"
 log "changed files: $(echo "$ALL_CHANGES" | grep '^>' | awk '{print $2}' | tr '\n' ' ')"
 
 ssh -o ConnectTimeout=15 "$SERVER" \
-  "cd $REMOTE_APP && docker compose build --quiet && docker compose up -d" \
+  "cd $REMOTE_APP && docker compose build --quiet && docker compose up -d && docker image prune -f" \
   >> "$LOG" 2>&1 || { log "ERROR: docker rebuild failed"; exit 1; }
 
 log "deploy complete"
