@@ -104,32 +104,34 @@ done < <(launchctl list 2>/dev/null | grep com.paperclip)
 LA_JSON+="}"
 
 # --- B. Production Server Health ---
+# SSH probe: single connection using ControlMaster so concurrent health-check
+# runs share the same TCP session (prevents UFW rate-limit false positives).
+# BatchMode=yes avoids hanging on a password prompt if key auth breaks.
+SSH_CONTROL_PATH="/tmp/paperclip-ssh-health-%r@%h-%p"
+SSH_OPTS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=no -o BatchMode=yes \
+          -o ControlMaster=auto -o "ControlPath=$SSH_CONTROL_PATH" \
+          -o ControlPersist=120)
 SSH_OK=false
 CONTAINER_STATUS="unknown"
-SSH_OUT=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$SERVER" \
-    "docker ps --format '{{.Names}} {{.Status}}'" 2>/dev/null) || true
+SSH_EXIT=0
+SSH_OUT=$(ssh "${SSH_OPTS[@]}" "$SERVER" \
+    "printf '__CONNECTED__\n'; docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null" \
+    2>/dev/null) || SSH_EXIT=$?
 
-if echo "$SSH_OUT" | grep -q "remodelai-app"; then
+if [ "$SSH_EXIT" -eq 0 ] && echo "$SSH_OUT" | grep -q "__CONNECTED__"; then
     SSH_OK=true
-    CONTAINER_STATUS="running"
-elif [ -n "$SSH_OUT" ]; then
-    SSH_OK=true
-    CONTAINER_STATUS="not_running"
-    HEALTHY=false
-    add_alert "Server: remodelai-app container not running"
-else
-    # Try basic SSH connectivity
-    if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$SERVER" "echo ok" 2>/dev/null | grep -q "ok"; then
-        SSH_OK=true
+    if echo "$SSH_OUT" | grep -q "remodelai-app"; then
+        CONTAINER_STATUS="running"
+    else
         CONTAINER_STATUS="not_running"
         HEALTHY=false
         add_alert "Server: remodelai-app container not running"
-    else
-        SSH_OK=false
-        CONTAINER_STATUS="ssh_failed"
-        HEALTHY=false
-        add_alert "Server: SSH connection failed"
     fi
+else
+    SSH_OK=false
+    CONTAINER_STATUS="ssh_failed"
+    HEALTHY=false
+    add_alert "Server: SSH connection failed"
 fi
 
 SERVER_JSON="{\"ssh\":$SSH_OK,\"containers\":{\"remodelai-app\":\"$CONTAINER_STATUS\"}}"
