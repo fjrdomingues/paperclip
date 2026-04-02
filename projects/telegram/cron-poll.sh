@@ -5,6 +5,26 @@ LAUNCHD_BASE_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbi
 export PATH="${LAUNCHD_BASE_PATH}:${PATH:-}"
 set -euo pipefail
 
+# Prevent concurrent runs — a second invocation while one is already polling
+# Telegram will cause a 409 Conflict on getUpdates.
+# Uses atomic mkdir for lock acquisition (macOS-compatible; no flock needed).
+LOCK_DIR="${TMPDIR:-/tmp}/com.paperclip.telegram-poll.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  # Lock directory exists — check whether the holder is still alive.
+  LOCK_PID_FILE="$LOCK_DIR/pid"
+  if [ -f "$LOCK_PID_FILE" ]; then
+    LOCK_PID="$(cat "$LOCK_PID_FILE" 2>/dev/null || true)"
+    if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+      exit 0  # Another live instance is running; skip this cycle.
+    fi
+  fi
+  # Stale lock from a crashed/killed run — remove and re-acquire.
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR" 2>/dev/null || exit 0
+fi
+echo "$$" > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
+
 # Telegram Cron Poller
 # Polls Telegram for new messages and stores them locally as JSONL.
 # Designed to run every 60s via launchd with a local Paperclip CLI available.
