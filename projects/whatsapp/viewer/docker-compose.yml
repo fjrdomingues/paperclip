@@ -1,0 +1,29 @@
+version: '3.8'
+
+networks:
+  default:
+    external: true
+    name: apps_default
+
+services:
+  whatsapp-viewer:
+    container_name: whatsapp-viewer
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./sync-data/whatsapp:/app/data
+      - ./sync-data/growth:/projects/growth/data:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whatsapp.rule=Host(`whatsapp.autohomeremodel.com`)
+      - traefik.http.routers.whatsapp.entrypoints=web,websecure
+      - traefik.http.routers.whatsapp.tls=true
+      - traefik.http.routers.whatsapp.tls.certresolver=mytlschallenge
+      - traefik.http.services.whatsapp.loadbalancer.server.port=5050
+    deploy:
+      resources:
+        limits:
+          memory: 128M
